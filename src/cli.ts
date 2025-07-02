@@ -42,7 +42,19 @@ export function createCLI(): Command {
     .description('Create a new calendar event')
     .option('-i, --interactive', 'Interactive mode')
     .option('-f, --find-slot', 'Find available time slot with attendees')
-    .action(createEvent);
+    .option('-n, --non-interactive', 'Non-interactive mode for automation')
+    .option('-s, --subject <subject>', 'Event subject (required for non-interactive)')
+    .option('-a, --attendees <emails...>', 'Attendee emails (comma-separated, required for non-interactive)')
+    .option('-d, --duration <minutes>', 'Meeting duration in minutes (default: 30)', '30')
+    .option('-o, --output-format <format>', 'Output format: json or text (default: text)', 'text')
+    .action((options) => {
+      // attendeesをカンマ区切りで分割
+      if (options.attendees && typeof options.attendees === 'string') {
+        options.attendees = options.attendees.split(',').map((email: string) => email.trim());
+      }
+      options.duration = parseInt(options.duration);
+      return createEvent(options);
+    });
 
   // Free/Busy確認コマンド
   calendar

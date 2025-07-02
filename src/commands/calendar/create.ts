@@ -10,11 +10,197 @@ import { createJSTDate, formatJST, isSameDayJST } from '../../utils/timezone.js'
 export async function createEvent(options: { 
   findSlot?: boolean;
   interactive?: boolean;
+  nonInteractive?: boolean;
+  subject?: string;
+  attendees?: string[];
+  duration?: number;
+  outputFormat?: 'json' | 'text';
 } = {}): Promise<void> {
   const mgc = new MgcService();
 
   try {
     let eventData: any = {};
+
+    // 非対話型モード
+    if (options.nonInteractive && options.subject && options.attendees && options.attendees.length > 0) {
+      eventData.subject = options.subject;
+      eventData.attendees = options.attendees.map(email => ({ emailAddress: { address: email } }));
+      const duration = options.duration || 30;
+
+      // 空き時間を探す
+      const now = new Date();
+      const searchDays = 14;
+      const endSearchDate = addDays(now, searchDays);
+      
+      const startDateStr = format(now, 'yyyy-MM-dd');
+      const endDateStr = format(endSearchDate, 'yyyy-MM-dd');
+      const attendeeEmails = options.attendees;
+      
+      // カレンダーとFree/Busy情報を取得
+      const [myEvents, freeBusyResult] = await Promise.all([
+        mgc.getMyCalendarEvents(
+          `${startDateStr}T00:00:00+09:00`,
+          `${endDateStr}T23:59:59+09:00`
+        ).catch(() => [] as CalendarEvent[]),
+        mgc.getUserFreeBusy(
+          attendeeEmails,
+          now.toISOString(),
+          endSearchDate.toISOString()
+        )
+      ]);
+
+      // 空き時間を探す（既存のロジックを使用）
+      const candidates: Array<{ date: Date; start: Date; end: Date }> = [];
+      
+      for (let i = 0; i < searchDays; i++) {
+        const date = addDays(now, i);
+        const dateStr = format(date, 'yyyy-MM-dd');
+        
+        if (!isWorkday(date)) continue;
+        
+        let searchStartTime = createJSTDate(dateStr, 9, 0);
+        let searchEndTime = createJSTDate(dateStr, 19, 0);
+        
+        if (process.env.DEBUG && dateStr === '2025-07-07') {
+          console.log(`\nDEBUG 7/7: Search times:`);
+          console.log(`  Start: ${searchStartTime.toISOString()} (${formatJST(searchStartTime, 'HH:mm')} JST)`);
+          console.log(`  End: ${searchEndTime.toISOString()} (${formatJST(searchEndTime, 'HH:mm')} JST)`);
+        }
+        
+        if (i === 0) {
+          const minStartTime = addMinutes(now, 30);
+          if (minStartTime > searchStartTime) {
+            searchStartTime = minStartTime;
+          }
+        }
+
+        let currentTime = new Date(searchStartTime);
+        while (currentTime < searchEndTime && addMinutes(currentTime, duration) <= searchEndTime) {
+          const slotEnd = addMinutes(currentTime, duration);
+          let allAvailable = true;
+          
+          if (process.env.DEBUG && dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') {
+            console.log(`\nDEBUG 7/7 18:00: Checking slot ${formatJST(currentTime, 'HH:mm')}-${formatJST(slotEnd, 'HH:mm')} JST`);
+          }
+          
+          // 自分のカレンダーをチェック
+          for (const event of myEvents) {
+            // Declinedイベントはスキップ
+            if (event.subject?.startsWith('Declined:')) {
+              continue;
+            }
+            
+            const eventStart = new Date(event.start.dateTime);
+            const eventEnd = new Date(event.end.dateTime);
+            
+            if (!isSameDayJST(eventStart, currentTime) &&
+                !isSameDayJST(eventEnd, currentTime)) {
+              continue;
+            }
+            
+            if (event.isAllDay && isSameDayJST(eventStart, currentTime)) {
+              if (event.showAs !== 'free' && event.showAs !== 'tentative') {
+                allAvailable = false;
+                break;
+              }
+            }
+            
+            if ((currentTime >= eventStart && currentTime < eventEnd) ||
+                (slotEnd > eventStart && slotEnd <= eventEnd) ||
+                (currentTime <= eventStart && slotEnd >= eventEnd)) {
+              if (event.showAs !== 'free' && event.showAs !== 'tentative') {
+                allAvailable = false;
+                if (process.env.DEBUG && dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') {
+                  console.log(`  Blocked by: "${event.subject}" (${formatJST(eventStart, 'HH:mm')}-${formatJST(eventEnd, 'HH:mm')} JST, showAs: ${event.showAs})`);
+                }
+                break;
+              }
+            }
+          }
+          
+          // 参加者のFree/Busyをチェック
+          if (allAvailable) {
+            const schedules = freeBusyResult.value || [];
+            
+            for (let scheduleIndex = 0; scheduleIndex < schedules.length; scheduleIndex++) {
+              const schedule = schedules[scheduleIndex];
+              
+              if (schedule.availabilityView) {
+                const slotStartTime = currentTime.getTime();
+                const requestStartTime = now.getTime();
+                const minutesFromStart = (slotStartTime - requestStartTime) / (1000 * 60);
+                const slotIndex = Math.floor(minutesFromStart / 30);
+                
+                if (process.env.DEBUG && dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') {
+                  console.log(`  DEBUG: Slot index calculation:`);
+                  console.log(`    currentTime: ${currentTime.toISOString()}`);
+                  console.log(`    requestStartTime: ${new Date(requestStartTime).toISOString()}`);
+                  console.log(`    minutesFromStart: ${minutesFromStart}`);
+                  console.log(`    slotIndex: ${slotIndex}`);
+                }
+                
+                if (slotIndex >= 0 && slotIndex < schedule.availabilityView.length) {
+                  const availability = schedule.availabilityView.charAt(slotIndex);
+                  if (availability !== '0') {
+                    allAvailable = false;
+                    if (process.env.DEBUG && dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') {
+                      console.log(`  ✗ Attendee ${attendeeEmails[scheduleIndex]} is busy (availability: ${availability})`);
+                    }
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          
+          if (allAvailable) {
+            if (process.env.DEBUG && dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') {
+              console.log(`  ✓ Slot is available! Adding to candidates.`);
+            }
+            candidates.push({
+              date: date,
+              start: new Date(currentTime),
+              end: new Date(slotEnd)
+            });
+          } else {
+            if (process.env.DEBUG && dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') {
+              console.log(`  ✗ Slot is NOT available.`);
+            }
+          }
+          
+          currentTime = addMinutes(currentTime, 30);
+        }
+      }
+
+      // 結果を出力
+      if (options.outputFormat === 'json') {
+        const result = {
+          success: candidates.length > 0,
+          subject: options.subject,
+          attendees: options.attendees,
+          duration: duration,
+          availableSlots: candidates.slice(0, 20).map(c => ({
+            date: format(c.date, 'yyyy-MM-dd'),
+            start: formatJST(c.start, 'HH:mm'),
+            end: formatJST(c.end, 'HH:mm'),
+            startISO: c.start.toISOString(),
+            endISO: c.end.toISOString()
+          }))
+        };
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        if (candidates.length === 0) {
+          console.log(chalk.yellow('No available time slots found'));
+        } else {
+          console.log(chalk.blue(`Found ${candidates.length} available time slots:`));
+          candidates.slice(0, 20).forEach((c, i) => {
+            console.log(`${i + 1}. ${format(c.date, 'EEE, MMM d')} ${formatJST(c.start, 'HH:mm')}-${formatJST(c.end, 'HH:mm')} JST`);
+          });
+        }
+      }
+      
+      return;
+    }
 
     if (options.interactive || options.findSlot) {
       // インタラクティブモード
@@ -190,6 +376,11 @@ export async function createEvent(options: {
             
             // まず自分のカレンダーをチェック
             for (const event of myEvents) {
+              // Declinedイベントはスキップ
+              if (event.subject?.startsWith('Declined:')) {
+                continue;
+              }
+              
               // イベントの時刻をそのまま使用
               const eventStart = new Date(event.start.dateTime);
               const eventEnd = new Date(event.end.dateTime);
@@ -213,9 +404,9 @@ export async function createEvent(options: {
                 continue;
               }
               
-              // 終日予定のチェック（showAsがfreeでない場合のみ）
+              // 終日予定のチェック（showAsがfreeまたはtentativeでない場合のみ）
               if (event.isAllDay && isSameDayJST(eventStart, currentTime)) {
-                if (event.showAs !== 'free') {
+                if (event.showAs !== 'free' && event.showAs !== 'tentative') {
                   allAvailable = false;
                   if (process.env.DEBUG) {
                     console.log(`  ✗ Your all-day event: "${event.subject}" (${event.showAs || 'busy'})`);
@@ -224,18 +415,18 @@ export async function createEvent(options: {
                 }
               }
               
-              // 時間帯の重複チェック（showAsがfreeの場合はスキップ）
+              // 時間帯の重複チェック（showAsがfreeまたはtentativeの場合はスキップ）
               if ((currentTime >= eventStart && currentTime < eventEnd) ||
                   (slotEnd > eventStart && slotEnd <= eventEnd) ||
                   (currentTime <= eventStart && slotEnd >= eventEnd)) {
-                if (event.showAs !== 'free') {
+                if (event.showAs !== 'free' && event.showAs !== 'tentative') {
                   allAvailable = false;
                   if (process.env.DEBUG) {
                     console.log(`  ✗ Your event conflicts: "${event.subject}" (${formatJST(eventStart, 'HH:mm')}-${formatJST(eventEnd, 'HH:mm')}, ${event.showAs || 'busy'})`);
                   }
                   break;
                 } else if (process.env.DEBUG) {
-                  console.log(`  ○ Your event but free: "${event.subject}" (${formatJST(eventStart, 'HH:mm')}-${formatJST(eventEnd, 'HH:mm')}, free)`);
+                  console.log(`  ○ Your event but ${event.showAs}: "${event.subject}" (${formatJST(eventStart, 'HH:mm')}-${formatJST(eventEnd, 'HH:mm')}, ${event.showAs})`);
                 }
               }
             }

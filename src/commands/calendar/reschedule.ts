@@ -172,19 +172,19 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
             continue;
           }
           
-          // 終日予定のチェック（showAsがfreeでない場合のみ）
+          // 終日予定のチェック（showAsがfreeまたはtentativeでない場合のみ）
           if (event.isAllDay && eventStart.toDateString() === currentTime.toDateString()) {
-            if (event.showAs !== 'free') {
+            if (event.showAs !== 'free' && event.showAs !== 'tentative') {
               allAvailable = false;
               break;
             }
           }
           
-          // 時間帯の重複チェック（showAsがfreeの場合はスキップ）
+          // 時間帯の重複チェック（showAsがfreeまたはtentativeの場合はスキップ）
           if ((currentTime >= eventStart && currentTime < eventEnd) ||
               (slotEnd > eventStart && slotEnd <= eventEnd) ||
               (currentTime <= eventStart && slotEnd >= eventEnd)) {
-            if (event.showAs !== 'free') {
+            if (event.showAs !== 'free' && event.showAs !== 'tentative') {
               allAvailable = false;
               break;
             }
