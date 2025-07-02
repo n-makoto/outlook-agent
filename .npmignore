@@ -1,0 +1,28 @@
+# Source files (only include built files)
+src/
+tsconfig.json
+
+# Development files
+.gitignore
+.git/
+.github/
+.env
+.env.local
+
+# Cache and local files
+.outlook-agent/
+*.log
+.DS_Store
+
+# Development dependencies
+node_modules/
+.vscode/
+.idea/
+
+# Test files
+test/
+*.test.ts
+*.spec.ts
+
+# Build artifacts we don't need
+*.tsbuildinfo

@@ -1,0 +1,45 @@
+{
+  "name": "outlook-agent",
+  "version": "0.1.0",
+  "description": "CLI tool for managing Outlook calendar with mgc (Microsoft Graph CLI)",
+  "bin": {
+    "outlook-agent": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["outlook", "calendar", "cli", "mgc", "microsoft-graph", "office365"],
+  "author": "chaspy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chaspy/outlook-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chaspy/outlook-agent/issues"
+  },
+  "homepage": "https://github.com/chaspy/outlook-agent#readme",
+  "dependencies": {
+    "commander": "^11.1.0",
+    "chalk": "^5.3.0",
+    "date-fns": "^3.0.6",
+    "zod": "^3.22.4",
+    "inquirer": "^9.2.12",
+    "inquirer-autocomplete-prompt": "^3.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.5",
+    "@types/inquirer": "^9.0.7",
+    "@types/inquirer-autocomplete-prompt": "^3.0.0",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

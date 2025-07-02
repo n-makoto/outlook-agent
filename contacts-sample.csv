@@ -1,0 +1,5 @@
+email,name,alias,tags,frequency
+john.doe@example.com,John Doe,JD,team;engineering,10
+jane.smith@example.com,Jane Smith,,management,5
+alice@example.com,Alice Johnson,AJ,design;ux,8
+bob.wilson@example.com,Bob Wilson,,engineering;backend,3
