@@ -29,8 +29,13 @@ export async function createEvent(options: {
 
       // 空き時間を探す
       const now = new Date();
+      
+      // Free/Busy APIのために現在時刻を30分単位に丸める（切り捨て）
+      const alignedNow = new Date(now);
+      alignedNow.setMinutes(Math.floor(alignedNow.getMinutes() / 30) * 30, 0, 0);
+      
       const searchDays = 14;
-      const endSearchDate = addDays(now, searchDays);
+      const endSearchDate = addDays(alignedNow, searchDays);
       
       const startDateStr = format(now, 'yyyy-MM-dd');
       const endDateStr = format(endSearchDate, 'yyyy-MM-dd');
@@ -44,7 +49,7 @@ export async function createEvent(options: {
         ).catch(() => [] as CalendarEvent[]),
         mgc.getUserFreeBusy(
           attendeeEmails,
-          now.toISOString(),
+          alignedNow.toISOString(),
           endSearchDate.toISOString()
         )
       ]);
@@ -79,8 +84,11 @@ export async function createEvent(options: {
           const slotEnd = addMinutes(currentTime, duration);
           let allAvailable = true;
           
-          if (process.env.DEBUG && dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') {
-            console.log(`\nDEBUG 7/7 18:00: Checking slot ${formatJST(currentTime, 'HH:mm')}-${formatJST(slotEnd, 'HH:mm')} JST`);
+          if (process.env.DEBUG && (
+            (dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') ||
+            (dateStr === '2025-07-09' && (formatJST(currentTime, 'HH:mm') === '17:30' || formatJST(currentTime, 'HH:mm') === '18:00'))
+          )) {
+            console.log(`\nDEBUG ${dateStr} ${formatJST(currentTime, 'HH:mm')}: Checking slot ${formatJST(currentTime, 'HH:mm')}-${formatJST(slotEnd, 'HH:mm')} JST`);
           }
           
           // 自分のカレンダーをチェック
@@ -90,8 +98,9 @@ export async function createEvent(options: {
               continue;
             }
             
-            const eventStart = new Date(event.start.dateTime);
-            const eventEnd = new Date(event.end.dateTime);
+            // UTCとして解釈（末尾にZを追加）
+            const eventStart = new Date(event.start.dateTime + 'Z');
+            const eventEnd = new Date(event.end.dateTime + 'Z');
             
             if (!isSameDayJST(eventStart, currentTime) &&
                 !isSameDayJST(eventEnd, currentTime)) {
@@ -99,7 +108,7 @@ export async function createEvent(options: {
             }
             
             if (event.isAllDay && isSameDayJST(eventStart, currentTime)) {
-              if (event.showAs !== 'free' && event.showAs !== 'tentative') {
+              if (event.showAs !== 'free') {
                 allAvailable = false;
                 break;
               }
@@ -108,9 +117,12 @@ export async function createEvent(options: {
             if ((currentTime >= eventStart && currentTime < eventEnd) ||
                 (slotEnd > eventStart && slotEnd <= eventEnd) ||
                 (currentTime <= eventStart && slotEnd >= eventEnd)) {
-              if (event.showAs !== 'free' && event.showAs !== 'tentative') {
+              if (event.showAs !== 'free') {
                 allAvailable = false;
-                if (process.env.DEBUG && dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') {
+                if (process.env.DEBUG && (
+                  (dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') ||
+                  (dateStr === '2025-07-09' && (formatJST(currentTime, 'HH:mm') === '17:30' || formatJST(currentTime, 'HH:mm') === '18:00'))
+                )) {
                   console.log(`  Blocked by: "${event.subject}" (${formatJST(eventStart, 'HH:mm')}-${formatJST(eventEnd, 'HH:mm')} JST, showAs: ${event.showAs})`);
                 }
                 break;
@@ -127,11 +139,14 @@ export async function createEvent(options: {
               
               if (schedule.availabilityView) {
                 const slotStartTime = currentTime.getTime();
-                const requestStartTime = now.getTime();
+                const requestStartTime = alignedNow.getTime();
                 const minutesFromStart = (slotStartTime - requestStartTime) / (1000 * 60);
                 const slotIndex = Math.floor(minutesFromStart / 30);
                 
-                if (process.env.DEBUG && dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') {
+                if (process.env.DEBUG && (
+                  (dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') ||
+                  (dateStr === '2025-07-09' && formatJST(currentTime, 'HH:mm') === '17:30')
+                )) {
                   console.log(`  DEBUG: Slot index calculation:`);
                   console.log(`    currentTime: ${currentTime.toISOString()}`);
                   console.log(`    requestStartTime: ${new Date(requestStartTime).toISOString()}`);
@@ -143,7 +158,10 @@ export async function createEvent(options: {
                   const availability = schedule.availabilityView.charAt(slotIndex);
                   if (availability !== '0') {
                     allAvailable = false;
-                    if (process.env.DEBUG && dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') {
+                    if (process.env.DEBUG && (
+                  (dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') ||
+                  (dateStr === '2025-07-09' && formatJST(currentTime, 'HH:mm') === '17:30')
+                )) {
                       console.log(`  ✗ Attendee ${attendeeEmails[scheduleIndex]} is busy (availability: ${availability})`);
                     }
                     break;
@@ -258,10 +276,15 @@ export async function createEvent(options: {
         // 候補を探す（14日間検索して十分な営業日をカバー）
         console.log(chalk.blue('Checking availability...'));
         const now = new Date();
+        
+        // Free/Busy APIのために現在時刻を30分単位に丸める（切り捨て）
+        const alignedNow = new Date(now);
+        alignedNow.setMinutes(Math.floor(alignedNow.getMinutes() / 30) * 30, 0, 0);
+        
         const candidates: Array<{ date: Date; start: Date; end: Date }> = [];
         
         const searchDays = 14;
-        const endSearchDate = addDays(now, searchDays);
+        const endSearchDate = addDays(alignedNow, searchDays);
         
         // カレンダーとFree/Busy情報を並行取得で高速化
         console.log(chalk.gray('Checking availability...'));
@@ -285,7 +308,7 @@ export async function createEvent(options: {
           // 参加者のFree/Busyを取得
           mgc.getUserFreeBusy(
             attendeeEmails,
-            now.toISOString(),
+            alignedNow.toISOString(),
             endSearchDate.toISOString()
           )
         ]);
@@ -404,9 +427,9 @@ export async function createEvent(options: {
                 continue;
               }
               
-              // 終日予定のチェック（showAsがfreeまたはtentativeでない場合のみ）
+              // 終日予定のチェック（showAsがfreeでない場合のみ）
               if (event.isAllDay && isSameDayJST(eventStart, currentTime)) {
-                if (event.showAs !== 'free' && event.showAs !== 'tentative') {
+                if (event.showAs !== 'free') {
                   allAvailable = false;
                   if (process.env.DEBUG) {
                     console.log(`  ✗ Your all-day event: "${event.subject}" (${event.showAs || 'busy'})`);
@@ -415,18 +438,18 @@ export async function createEvent(options: {
                 }
               }
               
-              // 時間帯の重複チェック（showAsがfreeまたはtentativeの場合はスキップ）
+              // 時間帯の重複チェック（showAsがfreeの場合はスキップ）
               if ((currentTime >= eventStart && currentTime < eventEnd) ||
                   (slotEnd > eventStart && slotEnd <= eventEnd) ||
                   (currentTime <= eventStart && slotEnd >= eventEnd)) {
-                if (event.showAs !== 'free' && event.showAs !== 'tentative') {
+                if (event.showAs !== 'free') {
                   allAvailable = false;
                   if (process.env.DEBUG) {
                     console.log(`  ✗ Your event conflicts: "${event.subject}" (${formatJST(eventStart, 'HH:mm')}-${formatJST(eventEnd, 'HH:mm')}, ${event.showAs || 'busy'})`);
                   }
                   break;
                 } else if (process.env.DEBUG) {
-                  console.log(`  ○ Your event but ${event.showAs}: "${event.subject}" (${formatJST(eventStart, 'HH:mm')}-${formatJST(eventEnd, 'HH:mm')}, ${event.showAs})`);
+                  console.log(`  ○ Your event but free: "${event.subject}" (${formatJST(eventStart, 'HH:mm')}-${formatJST(eventEnd, 'HH:mm')}, free)`);
                 }
               }
             }
@@ -445,7 +468,7 @@ export async function createEvent(options: {
                   // 現在のスロットの位置を計算
                   // availabilityViewはリクエストの開始時刻からの30分単位の配列
                   const slotStartTime = currentTime.getTime();
-                  const requestStartTime = now.getTime();
+                  const requestStartTime = alignedNow.getTime();
                   const minutesFromStart = (slotStartTime - requestStartTime) / (1000 * 60);
                   const slotIndex = Math.floor(minutesFromStart / 30);
                   

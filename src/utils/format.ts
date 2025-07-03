@@ -1,10 +1,11 @@
 import chalk from 'chalk';
-import { format } from 'date-fns';
 import { CalendarEvent } from '../types/calendar.js';
+import { formatJST } from './timezone.js';
 
 export function formatEvent(event: CalendarEvent): string {
-  const startTime = format(new Date(event.start.dateTime), 'HH:mm');
-  const endTime = format(new Date(event.end.dateTime), 'HH:mm');
+  // UTCとして解釈してJSTで表示
+  const startTime = formatJST(new Date(event.start.dateTime + 'Z'), 'HH:mm');
+  const endTime = formatJST(new Date(event.end.dateTime + 'Z'), 'HH:mm');
   
   const time = event.isAllDay ? chalk.gray('All day') : chalk.green(`${startTime}-${endTime}`);
   const subject = chalk.bold(event.subject);

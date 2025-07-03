@@ -211,8 +211,8 @@ export class MgcService {
         console.log('First busy item sample:', JSON.stringify(firstItem, null, 2));
         console.log('Date comparison:');
         console.log('  Raw dateTime:', firstItem.start.dateTime);
-        console.log('  Parsed as:', new Date(firstItem.start.dateTime).toString());
-        console.log('  In JST:', new Date(firstItem.start.dateTime).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }));
+        console.log('  Parsed as:', new Date(firstItem.start.dateTime + 'Z').toString());
+        console.log('  In JST:', new Date(firstItem.start.dateTime + 'Z').toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }));
       }
       
       // Also log availability view if present
@@ -223,23 +223,16 @@ export class MgcService {
         
         const requestStart = new Date(startTime);
         
-        // Debug specific slot
+        // Debug specific slots
         console.log(`\nDEBUG: Slot 225 (7/7 18:00 JST) = '${schedule.availabilityView.charAt(225)}'`);
         console.log(`Context around slot 225: "${schedule.availabilityView.substring(220, 230)}"`);
         
-        // What time does slot 220 represent?
-        const slot220time = new Date(requestStart.getTime() + 220 * 30 * 60 * 1000);
-        const slot225time = new Date(requestStart.getTime() + 225 * 30 * 60 * 1000);
-        const slot230time = new Date(requestStart.getTime() + 230 * 30 * 60 * 1000);
-        console.log(`Slot 220 = ${slot220time.toISOString()} (${slot220time.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })})`);
-        console.log(`Slot 225 = ${slot225time.toISOString()} (${slot225time.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })})`);
-        console.log(`Slot 230 = ${slot230time.toISOString()} (${slot230time.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })})`);
+        console.log(`\nDEBUG: Slot 300 (7/9 17:30 JST) = '${schedule.availabilityView.charAt(300)}'`);
+        console.log(`Context around slot 300: "${schedule.availabilityView.substring(295, 305)}"`);
         
-        // Find exact slot for 7/7 18:00 JST
-        const exact18JST = new Date('2025-07-07T09:00:00Z'); // 18:00 JST
-        const exactMinutes = (exact18JST.getTime() - requestStart.getTime()) / (1000 * 60);
-        const exactSlot = Math.floor(exactMinutes / 30);
-        console.log(`\nExact 7/7 18:00:00 JST = slot ${exactSlot}, value='${schedule.availabilityView.charAt(exactSlot)}'`);
+        // What time does slot 300 represent?
+        const slot300time = new Date(requestStart.getTime() + 300 * 30 * 60 * 1000);
+        console.log(`Slot 300 = ${slot300time.toISOString()} (${slot300time.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })})`);
         
         // 7/7の表示
         const date77 = new Date('2025-07-07T00:00:00+09:00');

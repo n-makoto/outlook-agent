@@ -85,8 +85,13 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
     console.log(chalk.blue('Finding available time slots...'));
     
     const now = new Date();
+    
+    // Free/Busy APIのために現在時刻を30分単位に丸める（切り捨て）
+    const alignedNow = new Date(now);
+    alignedNow.setMinutes(Math.floor(alignedNow.getMinutes() / 30) * 30, 0, 0);
+    
     const searchDays = 14;
-    const endSearchDate = addDays(now, searchDays);
+    const endSearchDate = addDays(alignedNow, searchDays);
     
     // 参加者のメールアドレスを取得（自分も含める）
     const attendeeEmails = selectedEvent.attendees?.map(a => a.emailAddress.address) || [];
@@ -113,7 +118,7 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
       // 参加者のFree/Busyを取得
       mgc.getUserFreeBusy(
         attendeeEmails,
-        now.toISOString(),
+        alignedNow.toISOString(),
         endSearchDate.toISOString()
       )
     ]);
@@ -163,8 +168,9 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
           if (event.id === selectedEvent.id) continue;
           
           // イベントの時刻をそのまま使用
-          const eventStart = new Date(event.start.dateTime);
-          const eventEnd = new Date(event.end.dateTime);
+          // UTCとして解釈（末尾にZを追加）
+          const eventStart = new Date(event.start.dateTime + 'Z');
+          const eventEnd = new Date(event.end.dateTime + 'Z');
           
           // 同じ日付のイベントのみチェック
           if (eventStart.toDateString() !== currentTime.toDateString() &&
@@ -172,19 +178,19 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
             continue;
           }
           
-          // 終日予定のチェック（showAsがfreeまたはtentativeでない場合のみ）
+          // 終日予定のチェック（showAsがfreeでない場合のみ）
           if (event.isAllDay && eventStart.toDateString() === currentTime.toDateString()) {
-            if (event.showAs !== 'free' && event.showAs !== 'tentative') {
+            if (event.showAs !== 'free') {
               allAvailable = false;
               break;
             }
           }
           
-          // 時間帯の重複チェック（showAsがfreeまたはtentativeの場合はスキップ）
+          // 時間帯の重複チェック（showAsがfreeの場合はスキップ）
           if ((currentTime >= eventStart && currentTime < eventEnd) ||
               (slotEnd > eventStart && slotEnd <= eventEnd) ||
               (currentTime <= eventStart && slotEnd >= eventEnd)) {
-            if (event.showAs !== 'free' && event.showAs !== 'tentative') {
+            if (event.showAs !== 'free') {
               allAvailable = false;
               break;
             }

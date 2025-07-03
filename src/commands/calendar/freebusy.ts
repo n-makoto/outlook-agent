@@ -55,7 +55,7 @@ export async function checkFreeBusy(options: { user?: string | boolean; days?: n
       console.log(chalk.bold(`\n${dateStr}:`));
 
       const daySchedule = schedule.scheduleItems?.filter((item: any) => {
-        const itemDate = new Date(item.start.dateTime);
+        const itemDate = new Date(item.start.dateTime + 'Z');
         return itemDate.toDateString() === date.toDateString();
       }) || [];
 
@@ -63,8 +63,8 @@ export async function checkFreeBusy(options: { user?: string | boolean; days?: n
         console.log(chalk.green('  All day free'));
       } else {
         daySchedule.forEach((item: any) => {
-          const start = format(new Date(item.start.dateTime), 'HH:mm');
-          const end = format(new Date(item.end.dateTime), 'HH:mm');
+          const start = format(new Date(item.start.dateTime + 'Z'), 'HH:mm');
+          const end = format(new Date(item.end.dateTime + 'Z'), 'HH:mm');
           const status = item.status === 'busy' ? chalk.red('Busy') : 
                         item.status === 'tentative' ? chalk.yellow('Tentative') :
                         item.status === 'oof' ? chalk.magenta('Out of Office') :

@@ -32,19 +32,19 @@ export function findAvailableSlots(
   // その日のイベントをフィルタリング
   const dayEvents = events
     .filter(event => {
-      const eventStart = new Date(event.start.dateTime);
+      const eventStart = new Date(event.start.dateTime + 'Z');
       return eventStart.toDateString() === date.toDateString();
     })
     .sort((a, b) => 
-      new Date(a.start.dateTime).getTime() - new Date(b.start.dateTime).getTime()
+      new Date(a.start.dateTime + 'Z').getTime() - new Date(b.start.dateTime + 'Z').getTime()
     );
 
   const availableSlots: TimeSlot[] = [];
   let currentTime = workStart;
 
   dayEvents.forEach(event => {
-    const eventStart = new Date(event.start.dateTime);
-    const eventEnd = new Date(event.end.dateTime);
+    const eventStart = new Date(event.start.dateTime + 'Z');
+    const eventEnd = new Date(event.end.dateTime + 'Z');
 
     // イベント開始前に空き時間があるか確認
     if (currentTime < eventStart) {
