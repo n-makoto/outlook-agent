@@ -123,6 +123,7 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
       )
     ]);
 
+    
     // 候補を探す
     const candidates: Array<{ date: Date; start: Date; end: Date }> = [];
     
@@ -213,8 +214,14 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
             const busyTimes = schedule.scheduleItems || [];
             
             for (const busy of busyTimes) {
-              const busyStart = new Date(busy.start.dateTime);
-              const busyEnd = new Date(busy.end.dateTime);
+              // Free/Busy APIはUTCで返すので、タイムゾーンを考慮
+              const busyStart = new Date(busy.start.dateTime + 'Z');
+              const busyEnd = new Date(busy.end.dateTime + 'Z');
+              
+              // status が free の場合はスキップ（空き時間として扱う）
+              if (busy.status === 'free') {
+                continue;
+              }
               
               // 時間帯重複チェック
               if ((currentTime >= busyStart && currentTime < busyEnd) ||
