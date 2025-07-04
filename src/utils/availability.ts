@@ -32,19 +32,34 @@ export function findAvailableSlots(
   // その日のイベントをフィルタリング
   const dayEvents = events
     .filter(event => {
-      const eventStart = new Date(event.start.dateTime + 'Z');
+      const startDateTime = event.start.timeZone === 'Asia/Tokyo' 
+        ? event.start.dateTime + '+09:00'
+        : event.start.dateTime + 'Z';
+      const eventStart = new Date(startDateTime);
       return eventStart.toDateString() === date.toDateString();
     })
-    .sort((a, b) => 
-      new Date(a.start.dateTime + 'Z').getTime() - new Date(b.start.dateTime + 'Z').getTime()
-    );
+    .sort((a, b) => {
+      const aStartDateTime = a.start.timeZone === 'Asia/Tokyo' 
+        ? a.start.dateTime + '+09:00'
+        : a.start.dateTime + 'Z';
+      const bStartDateTime = b.start.timeZone === 'Asia/Tokyo'
+        ? b.start.dateTime + '+09:00'
+        : b.start.dateTime + 'Z';
+      return new Date(aStartDateTime).getTime() - new Date(bStartDateTime).getTime();
+    });
 
   const availableSlots: TimeSlot[] = [];
   let currentTime = workStart;
 
   dayEvents.forEach(event => {
-    const eventStart = new Date(event.start.dateTime + 'Z');
-    const eventEnd = new Date(event.end.dateTime + 'Z');
+    const startDateTime = event.start.timeZone === 'Asia/Tokyo' 
+      ? event.start.dateTime + '+09:00'
+      : event.start.dateTime + 'Z';
+    const endDateTime = event.end.timeZone === 'Asia/Tokyo'
+      ? event.end.dateTime + '+09:00'
+      : event.end.dateTime + 'Z';
+    const eventStart = new Date(startDateTime);
+    const eventEnd = new Date(endDateTime);
 
     // イベント開始前に空き時間があるか確認
     if (currentTime < eventStart) {

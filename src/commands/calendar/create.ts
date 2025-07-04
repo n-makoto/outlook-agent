@@ -85,10 +85,11 @@ export async function createEvent(options: {
           let allAvailable = true;
           
           if (process.env.DEBUG && (
-            (dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') ||
+            (dateStr === '2025-07-07' && (formatJST(currentTime, 'HH:mm') === '11:00' || formatJST(currentTime, 'HH:mm') === '18:00')) ||
             (dateStr === '2025-07-09' && (formatJST(currentTime, 'HH:mm') === '17:30' || formatJST(currentTime, 'HH:mm') === '18:00'))
           )) {
             console.log(`\nDEBUG ${dateStr} ${formatJST(currentTime, 'HH:mm')}: Checking slot ${formatJST(currentTime, 'HH:mm')}-${formatJST(slotEnd, 'HH:mm')} JST`);
+            console.log(`  Total events to check: ${myEvents.length}`);
           }
           
           // 自分のカレンダーをチェック
@@ -98,9 +99,30 @@ export async function createEvent(options: {
               continue;
             }
             
-            // UTCとして解釈（末尾にZを追加）
-            const eventStart = new Date(event.start.dateTime + 'Z');
-            const eventEnd = new Date(event.end.dateTime + 'Z');
+            // デバッグ: 7/7 11:00と7/9 18:00のスロットで全イベントを表示
+            if (process.env.DEBUG && ((dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '11:00') || (dateStr === '2025-07-09' && formatJST(currentTime, 'HH:mm') === '18:00'))) {
+              const tempStartDateTime = event.start.timeZone === 'Asia/Tokyo' 
+                ? event.start.dateTime + '+09:00'
+                : event.start.dateTime + 'Z';
+              const tempEndDateTime = event.end.timeZone === 'Asia/Tokyo'
+                ? event.end.dateTime + '+09:00'
+                : event.end.dateTime + 'Z';
+              const eventStartJST = formatJST(new Date(tempStartDateTime), 'yyyy-MM-dd HH:mm');
+              const eventEndJST = formatJST(new Date(tempEndDateTime), 'HH:mm');
+              console.log(`  Event: "${event.subject}" ${eventStartJST}-${eventEndJST} JST (showAs: ${event.showAs})`);
+            }
+            
+            // タイムゾーン処理
+            // timeZoneが指定されている場合はそのまま、ない場合はUTCとして解釈
+            const startDateTime = event.start.timeZone === 'Asia/Tokyo' 
+              ? event.start.dateTime + '+09:00'
+              : event.start.dateTime + 'Z';
+            const endDateTime = event.end.timeZone === 'Asia/Tokyo'
+              ? event.end.dateTime + '+09:00'
+              : event.end.dateTime + 'Z';
+              
+            const eventStart = new Date(startDateTime);
+            const eventEnd = new Date(endDateTime);
             
             if (!isSameDayJST(eventStart, currentTime) &&
                 !isSameDayJST(eventEnd, currentTime)) {
@@ -120,7 +142,7 @@ export async function createEvent(options: {
               if (event.showAs !== 'free') {
                 allAvailable = false;
                 if (process.env.DEBUG && (
-                  (dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') ||
+                  (dateStr === '2025-07-07' && (formatJST(currentTime, 'HH:mm') === '11:00' || formatJST(currentTime, 'HH:mm') === '18:00')) ||
                   (dateStr === '2025-07-09' && (formatJST(currentTime, 'HH:mm') === '17:30' || formatJST(currentTime, 'HH:mm') === '18:00'))
                 )) {
                   console.log(`  Blocked by: "${event.subject}" (${formatJST(eventStart, 'HH:mm')}-${formatJST(eventEnd, 'HH:mm')} JST, showAs: ${event.showAs})`);
@@ -144,7 +166,7 @@ export async function createEvent(options: {
                 const slotIndex = Math.floor(minutesFromStart / 30);
                 
                 if (process.env.DEBUG && (
-                  (dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') ||
+                  (dateStr === '2025-07-07' && (formatJST(currentTime, 'HH:mm') === '11:00' || formatJST(currentTime, 'HH:mm') === '18:00')) ||
                   (dateStr === '2025-07-09' && formatJST(currentTime, 'HH:mm') === '17:30')
                 )) {
                   console.log(`  DEBUG: Slot index calculation:`);
@@ -156,10 +178,20 @@ export async function createEvent(options: {
                 
                 if (slotIndex >= 0 && slotIndex < schedule.availabilityView.length) {
                   const availability = schedule.availabilityView.charAt(slotIndex);
+                  
+                  // Special debug for 7/7 11:00
+                  if (process.env.DEBUG && dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '11:00') {
+                    console.log(`  DEBUG 7/7 11:00: Availability view index ${slotIndex} = '${availability}' for ${attendeeEmails[scheduleIndex]}`);
+                    // Show context around this slot
+                    const start = Math.max(0, slotIndex - 2);
+                    const end = Math.min(schedule.availabilityView.length, slotIndex + 3);
+                    console.log(`    Context: "${schedule.availabilityView.substring(start, end)}" (positions ${start}-${end})`);
+                  }
+                  
                   if (availability !== '0') {
                     allAvailable = false;
                     if (process.env.DEBUG && (
-                  (dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') ||
+                  (dateStr === '2025-07-07' && (formatJST(currentTime, 'HH:mm') === '11:00' || formatJST(currentTime, 'HH:mm') === '18:00')) ||
                   (dateStr === '2025-07-09' && formatJST(currentTime, 'HH:mm') === '17:30')
                 )) {
                       console.log(`  ✗ Attendee ${attendeeEmails[scheduleIndex]} is busy (availability: ${availability})`);
@@ -172,7 +204,7 @@ export async function createEvent(options: {
           }
           
           if (allAvailable) {
-            if (process.env.DEBUG && dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') {
+            if (process.env.DEBUG && dateStr === '2025-07-07' && (formatJST(currentTime, 'HH:mm') === '11:00' || formatJST(currentTime, 'HH:mm') === '18:00')) {
               console.log(`  ✓ Slot is available! Adding to candidates.`);
             }
             candidates.push({
@@ -181,7 +213,7 @@ export async function createEvent(options: {
               end: new Date(slotEnd)
             });
           } else {
-            if (process.env.DEBUG && dateStr === '2025-07-07' && formatJST(currentTime, 'HH:mm') === '18:00') {
+            if (process.env.DEBUG && dateStr === '2025-07-07' && (formatJST(currentTime, 'HH:mm') === '11:00' || formatJST(currentTime, 'HH:mm') === '18:00')) {
               console.log(`  ✗ Slot is NOT available.`);
             }
           }

@@ -168,9 +168,17 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
           if (event.id === selectedEvent.id) continue;
           
           // イベントの時刻をそのまま使用
-          // UTCとして解釈（末尾にZを追加）
-          const eventStart = new Date(event.start.dateTime + 'Z');
-          const eventEnd = new Date(event.end.dateTime + 'Z');
+          // タイムゾーン処理
+          // timeZoneが指定されている場合はそのまま、ない場合はUTCとして解釈
+          const startDateTime = event.start.timeZone === 'Asia/Tokyo' 
+            ? event.start.dateTime + '+09:00'
+            : event.start.dateTime + 'Z';
+          const endDateTime = event.end.timeZone === 'Asia/Tokyo'
+            ? event.end.dateTime + '+09:00'
+            : event.end.dateTime + 'Z';
+            
+          const eventStart = new Date(startDateTime);
+          const eventEnd = new Date(endDateTime);
           
           // 同じ日付のイベントのみチェック
           if (eventStart.toDateString() !== currentTime.toDateString() &&
