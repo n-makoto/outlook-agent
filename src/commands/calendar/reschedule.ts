@@ -56,26 +56,76 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
 
     // イベント詳細を表示
     console.log(chalk.cyan('\nEvent details:'));
-    console.log(chalk.gray(`Subject: ${selectedEvent.subject}`));
-    console.log(chalk.gray(`Current time: ${format(new Date(selectedEvent.start.dateTime), 'EEE, MMM d HH:mm')} - ${format(new Date(selectedEvent.end.dateTime), 'HH:mm')}`));
-    console.log(chalk.gray(`Attendees: ${selectedEvent.attendees?.map(a => a.emailAddress.address).join(', ')}`));
+    console.log(chalk.white(`Subject: ${selectedEvent.subject}`));
+    console.log(chalk.white(`Organizer: ${selectedEvent.organizer?.emailAddress.name || selectedEvent.organizer?.emailAddress.address || 'Unknown'}`));
+    console.log(chalk.white(`Current time: ${format(new Date(selectedEvent.start.dateTime), 'EEE, MMM d HH:mm')} - ${format(new Date(selectedEvent.end.dateTime), 'HH:mm')}`));
+    console.log(chalk.white(`Attendees: ${selectedEvent.attendees?.map(a => a.emailAddress.address).join(', ')}`));
+
+    // 自分が主催者かチェック
+    const currentUserInfo = await mgc.getCurrentUser();
+    const isOrganizer = selectedEvent.organizer?.emailAddress.address === currentUserInfo.mail ||
+                       selectedEvent.responseStatus?.response === 'organizer';
 
     // リスケジュールの確認
+    const choices = [
+      { name: 'Find a new time', value: 'reschedule' },
+      { name: 'Exit without changes', value: 'exit' }
+    ];
+    
+    // 主催者の場合はキャンセル、参加者の場合は辞退オプションを追加
+    if (isOrganizer) {
+      choices.splice(1, 0, { name: 'Cancel this meeting', value: 'cancel' });
+      console.log(chalk.yellow('\n(You are the organizer)'));
+    } else {
+      choices.splice(1, 0, { name: 'Decline this meeting', value: 'decline' });
+    }
+
     const { action } = await inquirer.prompt([
       {
         type: 'list',
         name: 'action',
         message: 'What would you like to do with this meeting?',
-        choices: [
-          { name: 'Find a new time', value: 'reschedule' },
-          { name: 'Cancel this meeting', value: 'cancel' },
-          { name: 'Exit without changes', value: 'exit' }
-        ]
+        choices
       }
     ]);
 
     if (action === 'exit') {
       console.log(chalk.yellow('No changes made'));
+      return;
+    }
+    
+    if (action === 'decline') {
+      // 辞退メッセージを入力
+      const { declineMessage } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'declineMessage',
+          message: 'Enter a message for declining (optional):',
+          default: 'I have a scheduling conflict at this time.'
+        }
+      ]);
+
+      // 辞退確認
+      const { confirmDecline } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'confirmDecline',
+          message: 'Are you sure you want to decline this meeting?',
+          default: true
+        }
+      ]);
+
+      if (confirmDecline) {
+        try {
+          console.log(chalk.cyan('Declining meeting...'));
+          await mgc.declineEvent(selectedEvent.id, declineMessage);
+          console.log(chalk.green('✓ Meeting declined successfully!'));
+        } catch (error: any) {
+          console.error(chalk.red('Failed to decline meeting:'), error.message || error);
+        }
+      } else {
+        console.log(chalk.yellow('Decline aborted'));
+      }
       return;
     }
 
@@ -294,19 +344,29 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
 
     // 候補を表示して選択（最大20個表示）
     const sortedCandidates = candidates.sort((a, b) => a.start.getTime() - b.start.getTime());
+    const slotChoices = [
+      ...sortedCandidates.slice(0, 20).map((candidate, index) => ({
+        name: `${format(candidate.date, 'EEE, MMM d')} ${format(candidate.start, 'HH:mm')}-${format(candidate.end, 'HH:mm')}`,
+        value: index
+      })),
+      { name: '── Cancel (go back) ──', value: -1 }
+    ];
+    
     const { selectedSlot } = await inquirer.prompt([
       {
         type: 'list',
         name: 'selectedSlot',
         message: 'Select a new time slot:',
-        choices: sortedCandidates.slice(0, 20).map((candidate, index) => ({
-          name: `${format(candidate.date, 'EEE, MMM d')} ${format(candidate.start, 'HH:mm')}-${format(candidate.end, 'HH:mm')}`,
-          value: index
-        })),
+        choices: slotChoices,
         pageSize: 10,
         loop: false
       }
     ]);
+
+    if (selectedSlot === -1) {
+      console.log(chalk.yellow('Reschedule cancelled'));
+      return;
+    }
 
     const selected = sortedCandidates[selectedSlot];
 

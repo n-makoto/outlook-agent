@@ -298,7 +298,7 @@ export class MgcService {
 
   async getEvent(eventId: string): Promise<CalendarEvent> {
     const command = `mgc me events get --event-id "${eventId}" \
-      --select "id,subject,start,end,location,responseStatus,attendees,isAllDay,isCancelled,showAs,body"`;
+      --select "id,subject,start,end,location,responseStatus,attendees,organizer,isAllDay,isCancelled,showAs,responseRequested,body"`;
     const result = await this.executeCommand(command);
     return result;
   }
