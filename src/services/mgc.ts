@@ -9,7 +9,7 @@ export class MgcService {
     try {
       // デバッグ用にコマンドを出力（一時的）
       if (process.env.DEBUG) {
-        console.log('Executing:', command);
+        console.log('\nExecuting:', command.substring(0, 200) + (command.length > 200 ? '...' : ''));
       }
       
       const { stdout, stderr } = await execAsync(command, {
@@ -18,10 +18,21 @@ export class MgcService {
       if (stderr) {
         console.error('MGC stderr:', stderr);
       }
+      // キャンセルAPIは "Success" を返すことがある
+      if (stdout.trim() === 'Success') {
+        return { success: true };
+      }
+      
       const result = JSON.parse(stdout);
       if (result.error) {
         throw new Error(`API Error: ${result.error.code} - ${result.error.message}`);
       }
+      
+      // デバッグ: 結果を出力
+      if (process.env.DEBUG) {
+        console.log('Result:', JSON.stringify(result, null, 2));
+      }
+      
       return result;
     } catch (error: any) {
       if (error.message?.includes('API Error:')) {
@@ -310,12 +321,13 @@ export class MgcService {
     const future = new Date();
     future.setDate(future.getDate() + days);
     
-    const startDate = now.toISOString();
+    // 日本時間の今日の始まりから取得
+    const startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
     const endDate = future.toISOString();
     
     const command = `mgc me calendar-view list \
       --headers 'Prefer=outlook.timezone="Asia/Tokyo"' \
-      --select "id,subject,start,end,location,responseStatus,attendees,isAllDay,isCancelled,showAs" \
+      --select "id,subject,start,end,location,responseStatus,attendees,organizer,isAllDay,isCancelled,showAs,responseRequested" \
       --start-date-time "${startDate}" \
       --end-date-time "${endDate}" \
       --filter "isCancelled eq false" \
@@ -325,9 +337,45 @@ export class MgcService {
     const result = await this.executeCommand(command);
     const events = result.value || [];
     
-    // Declined予定を除外
+    // Declined予定を除外（件名がDeclined:で始まるものも除外）
     return events.filter((event: CalendarEvent) => 
-      !event.responseStatus || event.responseStatus.response !== 'declined'
+      (!event.responseStatus || event.responseStatus.response !== 'declined') &&
+      !event.subject.startsWith('Declined:')
     );
+  }
+
+  async declineEvent(eventId: string, comment?: string): Promise<void> {
+    const body = comment 
+      ? JSON.stringify({ comment, sendResponse: true })
+      : JSON.stringify({ sendResponse: true });
+    
+    const command = `mgc users events decline post --user-id me --event-id "${eventId}" --body '${body}'`;
+    await this.executeCommand(command);
+  }
+
+  async updateEventResponse(eventId: string, response: 'accept' | 'decline' | 'tentativelyAccept'): Promise<void> {
+    // 通知を送らずにdecline/accept/tentativelyAcceptする
+    const body = JSON.stringify({ sendResponse: false });
+    
+    let command: string;
+    if (response === 'decline') {
+      command = `mgc users events decline post --user-id me --event-id "${eventId}" --body '${body}'`;
+    } else if (response === 'accept') {
+      command = `mgc users events accept post --user-id me --event-id "${eventId}" --body '${body}'`;
+    } else {
+      command = `mgc users events tentatively-accept post --user-id me --event-id "${eventId}" --body '${body}'`;
+    }
+    
+    await this.executeCommand(command);
+  }
+
+  async cancelEvent(eventId: string, comment?: string): Promise<void> {
+    // イベントをキャンセルする（主催者のみ）
+    const body = comment 
+      ? JSON.stringify({ comment })
+      : JSON.stringify({});
+    
+    const command = `mgc users events cancel post --user-id me --event-id "${eventId}" --body '${body}'`;
+    await this.executeCommand(command);
   }
 }

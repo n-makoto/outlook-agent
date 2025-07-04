@@ -20,3 +20,9 @@ export function formatEvent(event: CalendarEvent): string {
   
   return `${time} ${subject}${location}`;
 }
+
+export function formatDateTimeRange(start: Date, end: Date): string {
+  const startStr = formatJST(start, 'EEE, MMM d HH:mm');
+  const endStr = formatJST(end, 'HH:mm');
+  return `${startStr} - ${endStr}`;
+}

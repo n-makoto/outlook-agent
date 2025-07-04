@@ -21,9 +21,16 @@ export interface CalendarEvent {
       response: string;
     };
   }>;
+  organizer?: {
+    emailAddress: {
+      address: string;
+      name?: string;
+    };
+  };
   responseStatus?: {
     response: string;
   };
+  responseRequested?: boolean;
   isAllDay: boolean;
   isCancelled: boolean;
   showAs?: 'free' | 'tentative' | 'busy' | 'oof' | 'workingElsewhere' | 'unknown';

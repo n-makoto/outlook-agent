@@ -3,6 +3,7 @@ import { viewCalendar } from './commands/calendar/view.js';
 import { createEvent } from './commands/calendar/create.js';
 import { checkFreeBusy } from './commands/calendar/freebusy.js';
 import { rescheduleEvent } from './commands/calendar/reschedule.js';
+import { manageConflicts } from './commands/calendar/conflicts.js';
 import { syncContacts } from './commands/contacts/sync.js';
 import { listContacts } from './commands/contacts/list.js';
 import { addContact } from './commands/contacts/add.js';
@@ -68,6 +69,13 @@ export function createCLI(): Command {
     .command('reschedule [eventId]')
     .description('Reschedule an existing event by finding new available time slots')
     .action(rescheduleEvent);
+
+  // コンフリクト管理コマンド
+  calendar
+    .command('conflicts')
+    .description('Detect and manage scheduling conflicts')
+    .option('-d, --days <number>', 'Number of days to check (default: 7)', '7')
+    .action((options) => manageConflicts(parseInt(options.days)));
 
   // 連絡先コマンドグループ
   const contacts = program

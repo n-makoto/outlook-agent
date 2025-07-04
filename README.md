@@ -104,6 +104,21 @@ npx outlook-agent calendar reschedule
 npx outlook-agent calendar reschedule <eventId>
 ```
 
+### スケジュールのコンフリクトを管理
+
+```bash
+# 次の7日間のコンフリクトを検出して管理
+npx outlook-agent calendar conflicts
+
+# 特定の期間のコンフリクトを確認
+npx outlook-agent calendar conflicts --days 14
+```
+
+コンフリクト管理機能では：
+- 重複している予定を自動検出
+- 各予定に対して「参加」「欠席（メッセージ付き）」「リスケジュール」を選択可能
+- 欠席通知は自動的に送信されます
+
 ### 保存された連絡先を表示
 
 ```bash
