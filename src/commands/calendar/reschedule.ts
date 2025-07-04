@@ -13,7 +13,7 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
 
     if (!eventId) {
       // イベントを選択（高速化: 7日間に限定し、Declinedは除外済み）
-      console.log(chalk.blue('Fetching your meetings...'));
+      console.log(chalk.cyan('Fetching your meetings...'));
       const upcomingEvents = await mgc.getUpcomingEvents(7);
       
       // 参加者がいる予定のみ表示（自分が主催者または参加者の予定）
@@ -55,23 +55,62 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
     }
 
     // イベント詳細を表示
-    console.log(chalk.blue('\nEvent details:'));
+    console.log(chalk.cyan('\nEvent details:'));
     console.log(chalk.gray(`Subject: ${selectedEvent.subject}`));
     console.log(chalk.gray(`Current time: ${format(new Date(selectedEvent.start.dateTime), 'EEE, MMM d HH:mm')} - ${format(new Date(selectedEvent.end.dateTime), 'HH:mm')}`));
     console.log(chalk.gray(`Attendees: ${selectedEvent.attendees?.map(a => a.emailAddress.address).join(', ')}`));
 
     // リスケジュールの確認
-    const { confirmReschedule } = await inquirer.prompt([
+    const { action } = await inquirer.prompt([
       {
-        type: 'confirm',
-        name: 'confirmReschedule',
-        message: 'Do you want to find a new time for this meeting?',
-        default: true
+        type: 'list',
+        name: 'action',
+        message: 'What would you like to do with this meeting?',
+        choices: [
+          { name: 'Find a new time', value: 'reschedule' },
+          { name: 'Cancel this meeting', value: 'cancel' },
+          { name: 'Exit without changes', value: 'exit' }
+        ]
       }
     ]);
 
-    if (!confirmReschedule) {
-      console.log(chalk.yellow('Reschedule cancelled'));
+    if (action === 'exit') {
+      console.log(chalk.yellow('No changes made'));
+      return;
+    }
+
+    if (action === 'cancel') {
+      // キャンセルメッセージを入力
+      const { cancelMessage } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'cancelMessage',
+          message: 'Enter a cancellation message (optional):',
+          default: 'This meeting has been cancelled.'
+        }
+      ]);
+
+      // キャンセル確認
+      const { confirmCancel } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'confirmCancel',
+          message: 'Are you sure you want to cancel this meeting?',
+          default: false
+        }
+      ]);
+
+      if (confirmCancel) {
+        try {
+          console.log(chalk.cyan('Cancelling meeting...'));
+          await mgc.cancelEvent(selectedEvent.id, cancelMessage);
+          console.log(chalk.green('✓ Meeting cancelled successfully!'));
+        } catch (error: any) {
+          console.error(chalk.red('Failed to cancel meeting:'), error.message || error);
+        }
+      } else {
+        console.log(chalk.yellow('Cancellation aborted'));
+      }
       return;
     }
 
@@ -82,7 +121,7 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
     );
 
     // 空き時間を探す
-    console.log(chalk.blue('Finding available time slots...'));
+    console.log(chalk.cyan('Finding available time slots...'));
     
     const now = new Date();
     
@@ -272,7 +311,7 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
     const selected = sortedCandidates[selectedSlot];
 
     // 更新内容を確認
-    console.log(chalk.blue('\nReschedule summary:'));
+    console.log(chalk.cyan('\nReschedule summary:'));
     console.log(chalk.gray(`From: ${format(new Date(selectedEvent.start.dateTime), 'EEE, MMM d HH:mm')} - ${format(new Date(selectedEvent.end.dateTime), 'HH:mm')}`));
     console.log(chalk.gray(`To: ${format(selected.start, 'EEE, MMM d HH:mm')} - ${format(selected.end, 'HH:mm')}`));
 
@@ -291,7 +330,7 @@ export async function rescheduleEvent(eventId?: string): Promise<void> {
     }
 
     // イベントを更新
-    console.log(chalk.blue('Updating event...'));
+    console.log(chalk.cyan('Updating event...'));
     await mgc.updateEvent(selectedEvent.id, {
       start: {
         dateTime: selected.start.toISOString(),

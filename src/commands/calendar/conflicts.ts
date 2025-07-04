@@ -9,7 +9,7 @@ export async function manageConflicts(days: number = 7): Promise<void> {
   const mgc = new MgcService();
 
   try {
-    console.log(chalk.blue(`Checking for scheduling conflicts in the next ${days} days...`));
+    console.log(chalk.cyan(`Checking for scheduling conflicts in the next ${days} days...`));
     
     // 予定を取得
     const events = await mgc.getUpcomingEvents(days);
@@ -57,11 +57,11 @@ export async function manageConflicts(days: number = 7): Promise<void> {
       const resolutions: ConflictResolution[] = [];
       
       for (const event of conflict.events) {
-        console.log(chalk.blue(`\nEvent: ${event.subject}`));
-        console.log(chalk.gray(`Organizer: ${event.organizer?.emailAddress.name || event.organizer?.emailAddress.address || 'Unknown'}`));
-        console.log(chalk.gray(`Current status: ${event.responseStatus?.response || 'none'}`));
+        console.log(chalk.cyan(`\nEvent: ${event.subject}`));
+        console.log(chalk.white(`Organizer: ${event.organizer?.emailAddress.name || event.organizer?.emailAddress.address || 'Unknown'}`));
+        console.log(chalk.white(`Current status: ${event.responseStatus?.response || 'none'}`));
         if (event.responseRequested === false) {
-          console.log(chalk.gray(`Response required: No (RSVP not requested)`));
+          console.log(chalk.white(`Response required: No (RSVP not requested)`));
         }
         
         // 自分が主催者かどうかチェック
@@ -139,7 +139,7 @@ export async function manageConflicts(days: number = 7): Promise<void> {
       
       // アクションの確認
       if (resolutions.length > 0) {
-        console.log(chalk.blue('\nPlanned actions:'));
+        console.log(chalk.cyan('\nPlanned actions:'));
         for (const resolution of resolutions) {
           const event = conflict.events.find(e => e.id === resolution.eventId);
           const isOrganizer = event?.responseStatus?.response === 'organizer';
@@ -175,10 +175,21 @@ export async function manageConflicts(days: number = 7): Promise<void> {
             const event = conflict.events.find(e => e.id === resolution.eventId);
             const isOrganizer = event?.responseStatus?.response === 'organizer';
             
-            if (resolution.action === 'decline') {
+            if (resolution.action === 'attend') {
+              // Attendを選択した場合、acceptedにする
+              if (!isOrganizer && event?.responseStatus?.response !== 'accepted') {
+                console.log(chalk.cyan(`Accepting: ${event?.subject}...`));
+                try {
+                  await mgc.updateEventResponse(resolution.eventId, 'accept');
+                  console.log(chalk.green('✓ Accepted'));
+                } catch (error: any) {
+                  console.log(chalk.red('Failed to accept:'), error.message);
+                }
+              }
+            } else if (resolution.action === 'decline') {
               if (isOrganizer) {
                 // 主催者の場合はキャンセル
-                console.log(chalk.blue(`Cancelling: ${event?.subject}...`));
+                console.log(chalk.cyan(`Cancelling: ${event?.subject}...`));
                 try {
                   await mgc.cancelEvent(resolution.eventId, resolution.declineMessage);
                   console.log(chalk.green('✓ Event cancelled'));
@@ -187,7 +198,7 @@ export async function manageConflicts(days: number = 7): Promise<void> {
                 }
               } else {
                 // 参加者の場合は辞退
-                console.log(chalk.blue(`Processing: ${event?.subject}...`));
+                console.log(chalk.cyan(`Processing: ${event?.subject}...`));
                 
                 // 返信が必要かチェック
                 if (event?.responseRequested === false) {
@@ -220,7 +231,7 @@ export async function manageConflicts(days: number = 7): Promise<void> {
                 }
               }
             } else if (resolution.action === 'reschedule') {
-              console.log(chalk.blue(`\nRescheduling: ${event?.subject}`));
+              console.log(chalk.cyan(`\nRescheduling: ${event?.subject}`));
               // rescheduleEventをインポートして使用
               const { rescheduleEvent } = await import('./reschedule.js');
               await rescheduleEvent(resolution.eventId);
