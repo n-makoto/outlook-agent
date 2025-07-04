@@ -10,16 +10,27 @@ Outlookカレンダーを操作するCLIツール。mgcコマンドのラッパ�
 
 ## インストール
 
+### npxで実行（インストール不要・推奨）
+
+```bash
+# ヘルプを表示
+npx outlook-agent --help
+
+# 今日の予定を確認
+npx outlook-agent calendar view
+
+# 予定を作成
+npx outlook-agent calendar create --interactive
+```
+
 ### グローバルインストール
 
 ```bash
+# インストール
 npm install -g outlook-agent
-```
 
-### npxで実行（インストール不要）
-
-```bash
-npx outlook-agent --help
+# インストール後は outlook-agent コマンドが使えます
+outlook-agent calendar view
 ```
 
 ## セットアップ
@@ -52,6 +63,8 @@ npx outlook-agent doctor
 ```
 
 ## 使い方
+
+> 💡 **Tip**: 以下の例では `npx outlook-agent` を使用していますが、グローバルインストール済みの場合は `outlook-agent` に置き換えてください。
 
 ### 自分の今日の予定を確認
 
