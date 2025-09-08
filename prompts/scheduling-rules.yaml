@@ -1,0 +1,122 @@
+# Outlook Agent スケジューリングルール設定
+# このファイルを編集して、あなたの優先度ルールをカスタマイズできます
+
+version: 1.0
+
+# 優先度定義（スコアが高いほど重要）
+priorities:
+  critical:  # スコア: 100
+    - pattern: "CEO.*1on1"
+      description: "CEOとの1on1"
+    - pattern: "採用.*final|最終.*面接"
+      description: "最終面接"
+    - keywords: 
+        - "商談"
+        - "customer meeting"
+        - "client meeting"
+        - "お客様"
+      description: "顧客関連の会議"
+    
+  high:  # スコア: 75
+    - pattern: "定例.*チーム|チーム.*定例"
+      description: "チーム定例会議"
+    - pattern: "プロジェクト.*レビュー|レビュー.*会議"
+      description: "プロジェクトレビュー"
+    - attendees_count: 
+        min: 5
+        description: "参加者5名以上の会議"
+    - organizer_patterns:
+        - "@executive"
+        - "@management"
+      description: "経営層が主催する会議"
+    
+  medium:  # スコア: 50
+    - pattern: "1on1"
+      exclude_pattern: "CEO|CTO|CFO"
+      description: "通常の1on1"
+    - keywords: 
+        - "打ち合わせ"
+        - "sync"
+        - "alignment"
+        - "調整"
+      description: "調整・同期会議"
+    - pattern: "週次.*報告|報告.*会議"
+      description: "週次報告会議"
+    
+  low:  # スコア: 25
+    - keywords: 
+        - "情報共有"
+        - "FYI"
+        - "optional"
+        - "任意参加"
+      description: "情報共有・任意参加"
+    - response_required: false
+      description: "返信不要の会議"
+    - pattern: "勉強会|セミナー|ウェビナー"
+      description: "学習イベント"
+
+# コンフリクト解決ルール
+rules:
+  # 優先度差による自動判定
+  priority_difference:
+    - if_diff_greater_than: 50
+      then: "reschedule_lower_priority"
+      description: "優先度差が50以上の場合、低優先度をリスケ"
+    - if_diff_greater_than: 25
+      then: "suggest_reschedule"
+      description: "優先度差が25-50の場合、リスケを提案"
+    - if_diff_less_than: 25
+      then: "manual_decision"
+      description: "優先度差が小さい場合、手動判断"
+  
+  # 時間帯による調整
+  time_preferences:
+    - avoid_times:
+        - "12:00-13:00"  # ランチタイム
+        - "18:00-"       # 終業後
+      description: "避けるべき時間帯"
+    - preferred_times:
+        - "10:00-12:00"  # 午前の生産的な時間
+        - "14:00-16:00"  # 午後の集中時間
+      description: "推奨時間帯"
+  
+  # バッファタイム
+  buffer_time:
+    default_minutes: 15
+    between_external_meetings: 30
+    after_long_meetings:  # 1時間以上の会議後
+      duration_threshold: 60
+      buffer_minutes: 20
+  
+  # 特別ルール
+  special_rules:
+    - recurring_meetings:
+        action: "try_keep_original_time"
+        description: "定例会議は極力元の時間を維持"
+    - organizer_is_self:
+        action: "prioritize_reschedule"
+        description: "自分が主催者の場合、積極的にリスケ"
+    - external_attendees:
+        action: "minimize_changes"
+        description: "外部参加者がいる場合、変更を最小限に"
+
+# 学習設定
+learning:
+  enabled: true
+  approval_threshold: 0.7  # 70%以上の承認率でルール化を提案
+  min_samples: 5          # 最低5回の類似判断が必要
+
+# 通知設定（デフォルト値、環境変数で上書き可能）
+notifications:
+  on_reschedule: true
+  on_decline: true
+  on_accept: false
+  
+# カスタムメッセージテンプレート
+messages:
+  reschedule:
+    default: "スケジュールの都合により、別の時間に変更させていただきたく存じます。"
+    with_suggestion: "スケジュールの都合により、{new_time}への変更を提案させていただきます。"
+  decline:
+    default: "申し訳ございませんが、別の予定と重複しているため参加できません。"
+    with_alternative: "申し訳ございませんが、別の予定と重複しています。代替案として{alternative}はいかがでしょうか。"

@@ -14,6 +14,7 @@ import { bulkAddContacts } from './commands/contacts/bulk-add.js';
 import { doctor } from './commands/doctor.js';
 import { login } from './commands/auth/login.js';
 import { logout } from './commands/auth/logout.js';
+import { scheduleWeek } from './commands/agent/schedule-week.js';
 
 export function createCLI(): Command {
   const program = new Command();
@@ -149,6 +150,21 @@ export function createCLI(): Command {
     .command('logout')
     .description('Logout from Microsoft Graph')
     .action(logout);
+
+  // エージェントコマンドグループ
+  const agent = program
+    .command('agent')
+    .description('AI agent operations for automated scheduling');
+
+  // 週次スケジュール調整コマンド
+  agent
+    .command('schedule-week')
+    .description('Analyze and optimize weekly schedule conflicts')
+    .option('-d, --dry-run', 'Preview changes without applying them')
+    .option('--date <date>', 'Start date for the week (YYYY-MM-DD)')
+    .option('--json', 'Output in JSON format')
+    .option('--rules <file>', 'Path to custom scheduling rules YAML file')
+    .action(scheduleWeek);
 
   return program;
 }

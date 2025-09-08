@@ -29,12 +29,18 @@
     "date-fns": "^3.0.6",
     "zod": "^3.22.4",
     "inquirer": "^9.2.12",
-    "inquirer-autocomplete-prompt": "^3.0.1"
+    "inquirer-autocomplete-prompt": "^3.0.1",
+    "@mastra/core": "^0.1.0",
+    "@ai-sdk/openai": "^0.0.30",
+    "ai": "^3.0.0",
+    "js-yaml": "^4.1.0",
+    "crypto": "^1.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.10.5",
     "@types/inquirer": "^9.0.7",
     "@types/inquirer-autocomplete-prompt": "^3.0.0",
+    "@types/js-yaml": "^4.0.9",
     "typescript": "^5.3.3",
     "tsx": "^4.7.0"
   },
