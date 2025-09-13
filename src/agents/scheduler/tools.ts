@@ -1,7 +1,12 @@
-import { createTool } from '@mastra/core/tools';
+// Mastraパッケージのインストール問題を回避するため一時的にコメントアウト
+// import { createTool } from '@mastra/core/tools';
+
+// スタブ実装
+const createTool = (config: any) => config;
 import { z } from 'zod';
 import { MgcService } from '../../services/mgc.js';
 import { detectConflicts } from '../../utils/conflicts.js';
+import { calculateEventPriority, loadSchedulingRules } from '../../utils/rules.js';
 
 // 設定の読み込み（簡易版）
 const getConfig = () => ({
@@ -23,7 +28,7 @@ export const getCalendarTools = () => {
       inputSchema: z.object({
         days: z.number().default(7).describe('取得する日数'),
       }),
-      execute: async ({ input }) => {
+      execute: async ({ input }: { input: any }) => {
         const mgc = new MgcService();
         const events = await mgc.getUpcomingEvents(input.days);
         return {
@@ -48,7 +53,7 @@ export const getCalendarTools = () => {
       inputSchema: z.object({
         days: z.number().default(7).describe('チェックする日数'),
       }),
-      execute: async ({ input }) => {
+      execute: async ({ input }: { input: any }) => {
         const mgc = new MgcService();
         const events = await mgc.getUpcomingEvents(input.days);
         const conflicts = detectConflicts(events);
@@ -79,14 +84,14 @@ export const getCalendarTools = () => {
         startDate: z.string().optional().describe('検索開始日時（ISO 8601）'),
         endDate: z.string().optional().describe('検索終了日時（ISO 8601）'),
       }),
-      execute: async ({ input }) => {
+      execute: async ({ input }: { input: any }) => {
         const mgc = new MgcService();
         
         const startDate = input.startDate || new Date().toISOString();
         const endDate = input.endDate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
         
         const data = {
-          attendees: input.attendees.map(email => ({
+          attendees: input.attendees.map((email: any) => ({
             emailAddress: { address: email }
           })),
           timeConstraint: {
@@ -121,7 +126,7 @@ export const getCalendarTools = () => {
         startTime: z.string().describe('開始日時（ISO 8601）'),
         endTime: z.string().describe('終了日時（ISO 8601）'),
       }),
-      execute: async ({ input }) => {
+      execute: async ({ input }: { input: any }) => {
         const mgc = new MgcService();
         const result = await mgc.getUserFreeBusy(
           input.emails,
@@ -141,7 +146,7 @@ export const getCalendarTools = () => {
         newEndTime: z.string().describe('新しい終了時刻（ISO 8601）'),
         reason: z.string().describe('リスケジュールの理由'),
       }),
-      execute: async ({ input }) => {
+      execute: async ({ input }: { input: any }) => {
         // 提案のみを返す（実際の変更はユーザー承認後）
         return {
           proposal: {
@@ -155,6 +160,39 @@ export const getCalendarTools = () => {
             status: 'pending_approval'
           }
         };
+      },
+    }),
+
+    analyzeEventPriorities: createTool({
+      id: 'analyze-priorities',
+      description: 'イベントの優先度を分析',
+      inputSchema: z.object({
+        events: z.array(z.object({
+          id: z.string(),
+          subject: z.string(),
+          attendees: z.number(),
+          organizer: z.string().optional(),
+        })).describe('分析するイベントのリスト'),
+      }),
+      execute: async ({ input }: { input: any }) => {
+        const rulesResult = await loadSchedulingRules();
+        const priorities = input.events.map((event: any) => {
+          const priority = calculateEventPriority(
+            {
+              subject: event.subject,
+              attendees: new Array(event.attendees),
+              organizer: { emailAddress: { address: event.organizer || '' } }
+            },
+            rulesResult.rules
+          );
+          return {
+            eventId: event.id,
+            subject: event.subject,
+            ...priority
+          };
+        });
+        
+        return { priorities, rules: rulesResult.rules.rules };
       },
     }),
   };

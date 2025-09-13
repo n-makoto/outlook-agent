@@ -164,6 +164,7 @@ export function createCLI(): Command {
     .option('--date <date>', 'Start date for the week (YYYY-MM-DD)')
     .option('--json', 'Output in JSON format')
     .option('--rules <file>', 'Path to custom scheduling rules YAML file')
+    .option('--instructions <file>', 'Path to custom AI instructions YAML file')
     .action(scheduleWeek);
 
   return program;

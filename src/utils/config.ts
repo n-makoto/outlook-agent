@@ -22,7 +22,7 @@ export type Config = z.infer<typeof ConfigSchema>;
 // デフォルト設定
 const defaultConfig: Config = {
   timezone: process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo',
-  model: 'gpt-4-turbo',
+  model: 'gpt-4o-mini',
   notificationPolicy: {
     decline: true,
     reschedule: true,
