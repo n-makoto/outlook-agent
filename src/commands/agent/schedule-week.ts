@@ -566,8 +566,7 @@ async function applyProposedChanges(
       // イベントへの返信を更新（辞退）
       await mgc.updateEventResponse(eventToDecline.id, 'decline');
       
-      // TODO: コメント付きの辞退はdeclineEventメソッドを使用
-      // await mgc.declineEvent(eventToDecline.id, suggestion.reason || 'スケジュールコンフリクトのため参加できません');
+      // Note: コメント付きの辞退は将来のdeclineEventメソッド実装待ち
       
       return {
         success: true,
@@ -613,7 +612,7 @@ async function modifyProposal(proposal: any): Promise<any> {
   const modifiedProposal = { ...proposal };
   
   switch (action) {
-    case 'change_target':
+    case 'change_target': {
       const { targetEvent } = await inquirer.prompt([
         {
           type: 'list',
@@ -629,8 +628,9 @@ async function modifyProposal(proposal: any): Promise<any> {
       modifiedProposal.suggestion.targetEventId = targetEvent;
       modifiedProposal.suggestion.action = `選択されたイベントをリスケジュール`;
       break;
+    }
       
-    case 'specify_time':
+    case 'specify_time': {
       const { dateStr, timeStr } = await inquirer.prompt([
         {
           type: 'input',
@@ -648,6 +648,7 @@ async function modifyProposal(proposal: any): Promise<any> {
       
       modifiedProposal.suggestion.specificTime = `${dateStr}T${timeStr}:00`;
       break;
+    }
       
     case 'change_to_decline':
       modifiedProposal.suggestion.action = '辞退';

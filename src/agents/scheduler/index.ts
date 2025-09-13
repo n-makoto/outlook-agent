@@ -1,6 +1,4 @@
-// Mastraパッケージのインストール問題を回避するため一時的にコメントアウト
-// import { Agent } from '@mastra/core/agent';
-// import { openai } from '@ai-sdk/openai';
+// Mastra integration stub - will be replaced when package compatibility is resolved
 
 // スタブ実装
 class Agent {

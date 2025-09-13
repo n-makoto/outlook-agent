@@ -188,7 +188,10 @@ export class DecisionMemory {
               try {
                 decisions.push(JSON.parse(line));
               } catch (e) {
-                // 不正な行はスキップ
+                // 不正な行はスキップし、デバッグ情報を記録
+                if (process.env.DEBUG) {
+                  console.warn(`Skipping invalid JSON line: ${line.substring(0, 50)}...`);
+                }
               }
             }
           }

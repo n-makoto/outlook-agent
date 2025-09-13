@@ -167,6 +167,7 @@ export class AIService {
         };
       } catch (parseError) {
         // JSON解析に失敗した場合は、テキスト形式で返す
+        console.warn('Failed to parse AI response as JSON, returning fallback structure:', parseError)
         return {
           success: true,
           result: {

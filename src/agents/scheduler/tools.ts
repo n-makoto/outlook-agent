@@ -1,5 +1,4 @@
-// Mastraパッケージのインストール問題を回避するため一時的にコメントアウト
-// import { createTool } from '@mastra/core/tools';
+// Mastra integration stub - will be replaced when package compatibility is resolved
 
 // スタブ実装
 const createTool = (config: any) => config;
