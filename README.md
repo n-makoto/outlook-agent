@@ -164,6 +164,67 @@ npx outlook-agent contacts import my-contacts.json
 npx outlook-agent contacts import my-contacts.csv -m
 ```
 
+## AIエージェント機能（v0.2.0〜）
+
+### 週次スケジュール自動調整
+
+AIを活用してスケジュールコンフリクトを自動的に分析・解決します。
+
+```bash
+# 基本的な使用方法（ドライラン）
+npx outlook-agent agent schedule-week --dry-run
+
+# 実際に変更を適用
+OPENAI_API_KEY=your_key npx outlook-agent agent schedule-week
+
+# カスタムルールを使用
+npx outlook-agent agent schedule-week --rules ./my-rules.yaml
+
+# カスタムAI指示を使用
+npx outlook-agent agent schedule-week --instructions ./my-ai-instructions.yaml
+```
+
+### 主な機能
+
+- **バッチ承認UI**: 全コンフリクトを一覧表示し、一括または選択的に処理
+- **AI分析**: OpenAI APIを使用した高度な優先度判定
+- **カスタマイズ可能**: YAML形式でルールとAI動作を定義
+- **学習機能**: 過去の判断パターンを記憶し、提案を改善
+
+### 設定
+
+#### AI指示のカスタマイズ
+
+`prompts/ai-instructions.yaml`を作成または編集：
+
+```yaml
+custom_rules:
+  # 特定のコンフリクトを無視
+  ignore_conflicts:
+    - description: "金曜18時のToC EMよもやまとブロックは両立可能"
+      conditions:
+        - day_of_week: "Friday"
+          time: "18:00"
+          event1_pattern: "toC EM よもやま"
+          event2_pattern: "ブロック"
+      reason: "ブロックは参加可能な予備時間"
+```
+
+#### 環境変数
+
+```bash
+# OpenAI APIキー（AI分析を使用する場合は必須）
+export OPENAI_API_KEY="sk-..."
+
+# モデル選択（デフォルト: gpt-4o-mini）
+export OUTLOOK_AGENT_MODEL="gpt-4o"  # より高度な分析が必要な場合
+
+# タイムゾーン
+export OUTLOOK_AGENT_TIMEZONE="Asia/Tokyo"
+```
+
+詳細は[AIエージェントドキュメント](docs/agent-commands.md)を参照してください。
+
 ## 開発
 
 ### ローカル開発環境のセットアップ
