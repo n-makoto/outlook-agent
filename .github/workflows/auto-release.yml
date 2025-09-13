@@ -1,0 +1,45 @@
+name: Auto Release on Main Merge
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'package.json'
+
+jobs:
+  check-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Get version from package.json
+        id: package-version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+      
+      - name: Check if tag exists
+        id: tag-exists
+        run: |
+          if git rev-parse "v${{ steps.package-version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Create and push tag
+        if: steps.tag-exists.outputs.exists == 'false'
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git tag v${{ steps.package-version.outputs.version }}
+          git push origin v${{ steps.package-version.outputs.version }}
+      
+      - name: Tag created notification
+        if: steps.tag-exists.outputs.exists == 'false'
+        run: echo "🚀 Created tag v${{ steps.package-version.outputs.version }}, release workflow will be triggered"
+      
+      - name: Tag exists notification
+        if: steps.tag-exists.outputs.exists == 'true'
+        run: echo "ℹ️ Tag v${{ steps.package-version.outputs.version }} already exists, skipping"

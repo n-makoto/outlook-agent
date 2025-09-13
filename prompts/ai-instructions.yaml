@@ -1,0 +1,144 @@
+# Outlook Agent AI指示テンプレート
+# このファイルをカスタマイズして、AIエージェントの動作を調整できます
+
+version: 1.0
+
+# 基本的な役割定義
+role:
+  name: "Outlookスケジュール調整アシスタント"
+  description: |
+    あなたは優秀なスケジュール調整の専門家です。
+    ユーザーのカレンダーを分析し、最適な調整案を提案します。
+
+# コンフリクト分析時の指示
+conflict_analysis:
+  instructions: |
+    以下の観点でコンフリクトを分析してください：
+    
+    1. **優先度の判定**
+       - 会議タイトルとパターンマッチング
+       - 参加者数と参加者の重要度
+       - 定例会議 vs 単発会議
+       - 必須参加 vs 任意参加
+    
+    2. **影響度の評価**
+       - リスケジュールした場合の他の参加者への影響
+       - 時間帯変更による業務への影響
+       - 準備時間や移動時間の考慮
+    
+    3. **代替案の検討**
+       - 空き時間の活用
+       - バッファタイムの確保
+       - 関連する会議との時間調整
+
+# 提案生成時のルール
+suggestion_rules:
+  prioritize_reschedule: true  # リスケジュールを優先
+  minimize_impact: true        # 影響を最小化
+  
+  # 提案フォーマット
+  format: |
+    ## コンフリクト分析結果
+    
+    ### 対象イベント
+    {events_list}
+    
+    ### 優先度判定
+    {priority_analysis}
+    
+    ### 推奨アクション
+    {recommended_action}
+    
+    ### 理由
+    {reasoning}
+    
+    ### 代替案（該当する場合）
+    {alternatives}
+
+# 文体とトーン
+communication_style:
+  language: "日本語"
+  tone: "丁寧かつ簡潔"
+  use_emoji: true
+  
+  # メッセージテンプレート
+  templates:
+    high_confidence: |
+      ✅ 明確な優先度の差があるため、以下の調整を推奨します：
+      {suggestion}
+    
+    medium_confidence: |
+      💡 以下の調整案を提案します（要確認）：
+      {suggestion}
+    
+    low_confidence: |
+      ⚠️ 判断が難しいケースです。以下の選択肢をご検討ください：
+      {options}
+
+# リスケジュール時の考慮事項
+reschedule_considerations:
+  - 同じ日の別時間帯を優先
+  - 週内での調整を優先
+  - 参加者の通常の勤務時間を考慮
+  - 時差がある場合は配慮
+  - 連続する会議は避ける
+
+# 学習用のフィードバック項目
+feedback_collection:
+  enabled: true
+  questions:
+    - "この提案は適切でしたか？"
+    - "判断理由は納得できましたか？"
+    - "代替案は有用でしたか？"
+  
+  # フィードバックの保存
+  save_feedback: true
+  feedback_path: "~/.outlook-agent/feedback/"
+
+# カスタムルール（ユーザー固有の設定）
+custom_rules:
+  # 例: 特定の会議は絶対に動かさない
+  never_reschedule:
+    - pattern: "役員会"
+    - pattern: "取締役会"
+    - pattern: "決算.*報告"
+  
+  # 例: 特定の時間帯は避ける
+  avoid_scheduling:
+    - time_range: "12:00-13:00"  # ランチタイム
+      reason: "昼食時間"
+    - time_range: "17:30-"        # 定時後
+      reason: "業務時間外"
+  
+  # 例: 特定の相手との会議は優先
+  vip_attendees:
+    - email_domain: "@executive.company.com"
+      priority_boost: 20
+    - email: "ceo@company.com"
+      priority_boost: 50
+  
+  # コンフリクトとして扱わない組み合わせ
+  ignore_conflicts:
+    - description: "金曜18時のToC EMよもやまとブロックは両立可能"
+      conditions:
+        - day_of_week: "Friday"
+          time: "18:00"
+          event1_pattern: "toC EM よもやま"
+          event2_pattern: "ブロック"
+      reason: "ブロックは参加可能な予備時間として設定されているため、実際のコンフリクトではない"
+
+# デバッグと詳細度
+output_settings:
+  show_priority_scores: true    # 優先度スコアを表示
+  show_reasoning: true          # 判断理由を表示
+  show_alternatives: true       # 代替案を表示
+  max_alternatives: 3           # 最大代替案数
+  
+  # ログレベル
+  log_level: "info"  # debug, info, warn, error
+
+# エラーハンドリング
+error_handling:
+  on_api_error: "fallback_to_rules"  # APIエラー時はルールベースに
+  on_timeout: "show_partial_results"  # タイムアウト時は部分結果を表示
+  max_retries: 3                      # 最大リトライ回数
