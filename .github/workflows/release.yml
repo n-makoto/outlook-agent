@@ -20,6 +20,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Ensure tag exists for workflow_dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          # Check if tag exists remotely
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag ${TAG} exists, checking out"
+            git checkout tags/${TAG}
+          else
+            echo "Error: Tag ${TAG} does not exist"
+            echo "Please create the tag first using: git tag ${TAG} && git push origin ${TAG}"
+            exit 1
+          fi
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -41,6 +57,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
