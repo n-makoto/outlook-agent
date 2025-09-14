@@ -1,4 +1,7 @@
 import { Command } from 'commander';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { viewCalendar } from './commands/calendar/view.js';
 import { createEvent } from './commands/calendar/create.js';
 import { checkFreeBusy } from './commands/calendar/freebusy.js';
@@ -16,13 +19,18 @@ import { login } from './commands/auth/login.js';
 import { logout } from './commands/auth/logout.js';
 import { scheduleWeek } from './commands/agent/schedule-week.js';
 
+// Get package.json version dynamically
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const packageJson = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
+const version = packageJson.version;
+
 export function createCLI(): Command {
   const program = new Command();
   
   program
     .name('outlook-agent')
     .description('CLI tool for managing Outlook calendar')
-    .version('0.1.0');
+    .version(version);
 
   // カレンダーコマンドグループ
   const calendar = program
