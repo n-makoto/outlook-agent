@@ -6,3 +6,7 @@ dist/
 .DS_Store
 .outlook-agent/
 coverage/
+
+# Private configuration files (contain personal meeting data)
+prompts/ai-instructions.yaml
+prompts/scheduling-rules.yaml

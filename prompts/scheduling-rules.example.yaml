@@ -1,0 +1,123 @@
+# Outlook Agent スケジューリングルール設定
+# このファイルをコピーして scheduling-rules.yaml として使用してください
+# cp prompts/scheduling-rules.example.yaml prompts/scheduling-rules.yaml
+
+version: 1.0
+
+# 優先度計算ルール
+priority_rules:
+  # 会議タイトルのパターンマッチング
+  title_patterns:
+    - pattern: "役員.*"
+      score: 100
+      description: "役員関連の会議"
+    
+    - pattern: "取締役.*"
+      score: 100
+      description: "取締役会議"
+    
+    - pattern: "顧客.*"
+      score: 80
+      description: "顧客関連の会議"
+    
+    - pattern: "インタビュー|面接|面談"
+      score: 75
+      description: "採用関連"
+    
+    - pattern: "1on1|1-on-1|One on One"
+      score: 60
+      description: "1on1ミーティング"
+    
+    - pattern: "定例|週次|月次"
+      score: 50
+      description: "定例会議"
+    
+    - pattern: "チーム.*|.*ミーティング"
+      score: 40
+      description: "チーム会議"
+    
+    - pattern: "ブロック|作業|集中"
+      score: 20
+      description: "作業時間"
+    
+    - pattern: "ランチ|休憩"
+      score: 10
+      description: "休憩時間"
+  
+  # 参加者数による重み付け
+  attendee_count:
+    - min: 10
+      score: 30
+      description: "大規模会議"
+    
+    - min: 5
+      max: 9
+      score: 20
+      description: "中規模会議"
+    
+    - min: 2
+      max: 4
+      score: 10
+      description: "小規模会議"
+  
+  # 主催者による重み付け
+  organizer:
+    external: 25  # 外部主催の会議
+    self: -5      # 自分が主催者の場合は調整しやすい
+  
+  # 定例会議の重み付け
+  recurring:
+    daily: 15
+    weekly: 10
+    biweekly: 8
+    monthly: 5
+  
+  # 参加ステータスによる重み付け
+  response_status:
+    accepted: 20
+    tentative: 0
+    notResponded: -10
+    declined: -50
+  
+  # 時間帯による重み付け
+  time_of_day:
+    morning:    # 9:00-12:00
+      score: 5
+      description: "午前中の会議"
+    
+    afternoon:  # 13:00-17:00
+      score: 0
+      description: "午後の会議"
+    
+    evening:    # 17:00以降
+      score: -10
+      description: "夕方以降の会議"
+
+# コンフリクト解決ルール
+conflict_resolution:
+  # 優先度差による判定閾値
+  priority_threshold:
+    auto_reschedule: 50  # この差以上なら自動でリスケジュール提案
+    suggest_reschedule: 30  # この差以上なら提案
+    manual_decision: 0   # これ未満は手動判断
+
+# 一般的な設定
+general:
+  # デフォルトの会議時間（分）
+  default_duration: 30
+  
+  # バッファタイム（分）
+  buffer_time: 15
+  
+  # 営業時間
+  business_hours:
+    start: "09:00"
+    end: "18:00"
+  
+  # 営業日
+  business_days:
+    - Monday
+    - Tuesday
+    - Wednesday
+    - Thursday
+    - Friday

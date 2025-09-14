@@ -1,6 +1,6 @@
 {
   "name": "outlook-agent",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "CLI tool for managing Outlook calendar with mgc (Microsoft Graph CLI)",
   "bin": {
     "outlook-agent": "./dist/index.js"

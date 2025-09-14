@@ -1,5 +1,6 @@
 # Outlook Agent AI指示テンプレート
-# このファイルをカスタマイズして、AIエージェントの動作を調整できます
+# このファイルをコピーして ai-instructions.yaml として使用してください
+# cp prompts/ai-instructions.example.yaml prompts/ai-instructions.yaml
 
 version: 1.0
 
@@ -118,14 +119,23 @@ custom_rules:
       priority_boost: 50
   
   # コンフリクトとして扱わない組み合わせ
+  # 例: 定例会議とブロック時間は両立可能
   ignore_conflicts:
-    - description: "金曜18時のWeekly Team Syncとブロックは両立可能"
+    - description: "金曜18時の定例会とブロック時間は両立可能"
       conditions:
         - day_of_week: "Friday"
           time: "18:00"
           event1_pattern: "Weekly Team Sync"
           event2_pattern: "ブロック"
       reason: "ブロックは参加可能な予備時間として設定されているため、実際のコンフリクトではない"
+    
+    # 他の例
+    - description: "昼食時間のコンフリクトは無視"
+      conditions:
+        - time: "12:00"
+          event1_pattern: "ランチ"
+          event2_pattern: ".*"
+      reason: "ランチは柔軟に調整可能"
 
 # デバッグと詳細度
 output_settings:
