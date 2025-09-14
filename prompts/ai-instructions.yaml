@@ -119,11 +119,11 @@ custom_rules:
   
   # コンフリクトとして扱わない組み合わせ
   ignore_conflicts:
-    - description: "金曜18時のToC EMよもやまとブロックは両立可能"
+    - description: "金曜18時のWeekly Team Syncとブロックは両立可能"
       conditions:
         - day_of_week: "Friday"
           time: "18:00"
-          event1_pattern: "toC EM よもやま"
+          event1_pattern: "Weekly Team Sync"
           event2_pattern: "ブロック"
       reason: "ブロックは参加可能な予備時間として設定されているため、実際のコンフリクトではない"
 
