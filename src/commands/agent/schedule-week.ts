@@ -122,6 +122,77 @@ function detectAndFilterConflicts(
 }
 
 /**
+ * 基本的な提案を作成
+ */
+function createBasicProposal(
+  conflict: EventConflict,
+  conflictIndex: number,
+  rules: any
+): Proposal {
+  const eventsWithPriority = conflict.events.map((e: CalendarEvent) => {
+    const priority = calculateEventPriority(e, rules);
+    return { ...e, priority };
+  });
+  
+  const sortedEvents = [...eventsWithPriority].sort((a, b) => b.priority.score - a.priority.score);
+  const priorityDiff = sortedEvents[0].priority.score - sortedEvents[sortedEvents.length - 1].priority.score;
+  const action = determineConflictAction(priorityDiff, rules);
+  
+  return {
+    conflictId: `conflict-${conflictIndex}`,
+    timeRange: formatDateTimeRange(conflict.startTime, conflict.endTime),
+    events: sortedEvents.map(e => ({
+      id: e.id,
+      subject: e.subject,
+      organizer: e.organizer?.emailAddress.address,
+      attendeesCount: e.attendees?.length || 0,
+      responseStatus: e.responseStatus?.response || 'none',
+      priority: e.priority
+    })),
+    suggestion: {
+      action: action.action,
+      description: action.description,
+      aiAnalysis: null
+    }
+  };
+}
+
+/**
+ * AI分析結果を提案に適用
+ */
+function applyAIAnalysisToProposal(
+  proposal: Proposal,
+  aiResponse: any
+): void {
+  if (!aiResponse.success || !aiResponse.result) {
+    proposal.suggestion.aiError = aiResponse.error;
+    return;
+  }
+  
+  const aiResult = aiResponse.result;
+  
+  proposal.suggestion = {
+    action: getActionText(aiResult.recommendation.action, aiResult.recommendation.target),
+    reason: aiResult.recommendation.reason,
+    description: `AI分析による推奨（信頼度: ${aiResult.recommendation.confidence}）`,
+    confidence: aiResult.recommendation.confidence,
+    aiAnalysis: true,
+    alternatives: aiResult.alternatives
+  };
+  
+  if (proposal.events.length === 2) {
+    if (proposal.events[0].priority) {
+      proposal.events[0].priority.aiScore = aiResult.priority.event1.score;
+      proposal.events[0].priority.aiReason = aiResult.priority.event1.reason;
+    }
+    if (proposal.events[1].priority) {
+      proposal.events[1].priority.aiScore = aiResult.priority.event2.score;
+      proposal.events[1].priority.aiReason = aiResult.priority.event2.reason;
+    }
+  }
+}
+
+/**
  * AI分析による提案を生成
  */
 async function generateAIProposals(
@@ -131,50 +202,20 @@ async function generateAIProposals(
   aiService: AIService,
   options: ScheduleWeekOptions
 ): Promise<Proposal[]> {
-  const proposals = [];
-  const timezone = process.env.OUTLOOK_AGENT_TIMEZONE || 'Asia/Tokyo';
-  
   // 基本的な提案を作成
-  for (const conflict of conflicts) {
-    const eventsWithPriority = conflict.events.map((e: CalendarEvent) => {
-      const priority = calculateEventPriority(e, rules);
-      return { ...e, priority };
-    });
-    
-    const sortedEvents = [...eventsWithPriority].sort((a, b) => b.priority.score - a.priority.score);
-    const priorityDiff = sortedEvents[0].priority.score - sortedEvents[sortedEvents.length - 1].priority.score;
-    const action = determineConflictAction(priorityDiff, rules);
-    
-    const proposal: Proposal = {
-      conflictId: `conflict-${conflicts.indexOf(conflict)}`,
-      timeRange: formatDateTimeRange(conflict.startTime, conflict.endTime),
-      events: sortedEvents.map(e => ({
-        id: e.id,
-        subject: e.subject,
-        organizer: e.organizer?.emailAddress.address,
-        attendeesCount: e.attendees?.length || 0,
-        responseStatus: e.responseStatus?.response || 'none',
-        priority: e.priority
-      })),
-      suggestion: {
-        action: action.action,
-        description: action.description,
-        aiAnalysis: null
-      }
-    };
-    
-    proposals.push(proposal);
-  }
+  const proposals = conflicts.map((conflict, index) => 
+    createBasicProposal(conflict, index, rules)
+  );
   
   // AI分析を実行
   if (!options.json) {
     console.log(chalk.cyan('🤖 AI分析を実行中...'));
   }
   
+  const timezone = process.env.OUTLOOK_AGENT_TIMEZONE || 'Asia/Tokyo';
   const systemPrompt = generateSystemPrompt(aiInstructions, rules, timezone);
   
-  for (let i = 0; i < proposals.length; i++) {
-    const proposal = proposals[i];
+  for (const proposal of proposals) {
     const conflictData = {
       timeRange: proposal.timeRange,
       events: proposal.events
@@ -182,32 +223,7 @@ async function generateAIProposals(
     
     const analysisPrompt = generateConflictAnalysisPrompt(conflictData, aiInstructions);
     const aiResponse = await aiService.analyzeConflictStructured(systemPrompt, analysisPrompt);
-    
-    if (aiResponse.success && aiResponse.result) {
-      const aiResult = aiResponse.result;
-      
-      proposal.suggestion = {
-        action: getActionText(aiResult.recommendation.action, aiResult.recommendation.target),
-        reason: aiResult.recommendation.reason,
-        description: `AI分析による推奨（信頼度: ${aiResult.recommendation.confidence}）`,
-        confidence: aiResult.recommendation.confidence,
-        aiAnalysis: true,
-        alternatives: aiResult.alternatives
-      };
-      
-      if (proposal.events.length === 2) {
-        if (proposal.events[0].priority) {
-          proposal.events[0].priority.aiScore = aiResult.priority.event1.score;
-          proposal.events[0].priority.aiReason = aiResult.priority.event1.reason;
-        }
-        if (proposal.events[1].priority) {
-          proposal.events[1].priority.aiScore = aiResult.priority.event2.score;
-          proposal.events[1].priority.aiReason = aiResult.priority.event2.reason;
-        }
-      }
-    } else {
-      proposal.suggestion.aiError = aiResponse.error;
-    }
+    applyAIAnalysisToProposal(proposal, aiResponse);
   }
   
   return proposals;
@@ -595,8 +611,9 @@ async function applyProposedChanges(
     // リスケジュールの場合
     if (suggestion.action.includes('リスケジュール')) {
       // 低優先度のイベントを特定
-      const eventToReschedule = proposal.events.reduce((prev: any, curr: any) => 
-        (prev.priority?.score || 0) < (curr.priority?.score || 0) ? prev : curr
+      const eventToReschedule = proposal.events.reduce((prev: ProposalEvent, curr: ProposalEvent) => 
+        (prev.priority?.score || 0) < (curr.priority?.score || 0) ? prev : curr,
+        proposal.events[0]
       );
       
       // イベント詳細を取得してattendees情報を取得
@@ -650,8 +667,9 @@ async function applyProposedChanges(
     
     // 辞退の場合
     if (suggestion.action.includes('辞退')) {
-      const eventToDecline = proposal.events.reduce((prev: any, curr: any) => 
-        (prev.priority?.score || 0) < (curr.priority?.score || 0) ? prev : curr
+      const eventToDecline = proposal.events.reduce((prev: ProposalEvent, curr: ProposalEvent) => 
+        (prev.priority?.score || 0) < (curr.priority?.score || 0) ? prev : curr,
+        proposal.events[0]
       );
       
       // イベントへの返信を更新（辞退）
