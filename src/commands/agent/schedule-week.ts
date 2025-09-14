@@ -1,11 +1,14 @@
 import { MgcService } from '../../services/mgc.js';
 import { detectConflicts } from '../../utils/conflicts.js';
+import { EventConflict } from '../../types/conflict.js';
+import { CalendarEvent } from '../../types/calendar.js';
 import { formatDateTimeRange } from '../../utils/format.js';
 import { createSchedulerAgent } from '../../agents/scheduler/index.js';
 import { calculateEventPriority, loadSchedulingRules, determineConflictAction } from '../../utils/rules.js';
 import { loadAIInstructions, generateConflictAnalysisPrompt, generateSystemPrompt } from '../../utils/ai-prompt.js';
 import { DecisionMemory } from '../../agents/scheduler/memory.js';
 import { AIService } from '../../services/ai.js';
+import { ConflictFilter } from '../../utils/conflict-filter.js';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 
@@ -17,103 +20,446 @@ interface ScheduleWeekOptions {
   instructions?: string;  // AI指示設定ファイルのパス
 }
 
+interface Configuration {
+  timezone: string;
+  model: string;
+  startDate: Date;
+  days: number;
+  aiInstructions: any;
+  aiInstructionsResult: any;
+  rules: any;
+  rulesResult: any;
+}
+
+/**
+ * 設定を初期化
+ */
+async function initializeConfiguration(options: ScheduleWeekOptions): Promise<Configuration> {
+  const timezone = process.env.OUTLOOK_AGENT_TIMEZONE || process.env.TZ || 'Asia/Tokyo';
+  const model = process.env.OUTLOOK_AGENT_MODEL || 'gpt-4o-mini';
+  const startDate = options.date ? new Date(options.date) : new Date();
+  const days = 7;
+  
+  const aiInstructionsResult = await loadAIInstructions(options.instructions);
+  const rulesResult = await loadSchedulingRules(options.rules);
+  
+  return {
+    timezone,
+    model,
+    startDate,
+    days,
+    aiInstructions: aiInstructionsResult.instructions,
+    aiInstructionsResult,
+    rules: rulesResult.rules,
+    rulesResult
+  };
+}
+
+/**
+ * イベントを取得
+ */
+async function fetchEvents(mgc: MgcService, days: number, options: ScheduleWeekOptions): Promise<any[]> {
+  const events = await mgc.getUpcomingEvents(days);
+  
+  if (!options.json) {
+    console.log(chalk.green(`✓ ${events.length}件の予定を検出`));
+  }
+  
+  return events;
+}
+
+/**
+ * コンフリクトを検出してフィルタリング
+ */
+function detectAndFilterConflicts(
+  events: any[],
+  aiInstructions: any,
+  options: ScheduleWeekOptions
+): EventConflict[] {
+  let conflicts = detectConflicts(events);
+  
+  // ConflictFilterクラスを使用してフィルタリング
+  const conflictFilter = new ConflictFilter(aiInstructions);
+  conflicts = conflictFilter.filterConflicts(conflicts, !options.json);
+  
+  return conflicts;
+}
+
+/**
+ * AI分析による提案を生成
+ */
+async function generateAIProposals(
+  conflicts: EventConflict[],
+  rules: any,
+  aiInstructions: any,
+  aiService: AIService,
+  options: ScheduleWeekOptions
+): Promise<any[]> {
+  const proposals = [];
+  const timezone = process.env.OUTLOOK_AGENT_TIMEZONE || 'Asia/Tokyo';
+  
+  // 基本的な提案を作成
+  for (const conflict of conflicts) {
+    const eventsWithPriority = conflict.events.map((e: CalendarEvent) => {
+      const priority = calculateEventPriority(e, rules);
+      return { ...e, priority };
+    });
+    
+    const sortedEvents = [...eventsWithPriority].sort((a, b) => b.priority.score - a.priority.score);
+    const priorityDiff = sortedEvents[0].priority.score - sortedEvents[sortedEvents.length - 1].priority.score;
+    const action = determineConflictAction(priorityDiff, rules);
+    
+    const proposal = {
+      conflictId: `conflict-${conflicts.indexOf(conflict)}`,
+      timeRange: formatDateTimeRange(conflict.startTime, conflict.endTime),
+      events: sortedEvents.map(e => ({
+        id: e.id,
+        subject: e.subject,
+        organizer: e.organizer?.emailAddress.address,
+        attendeesCount: e.attendees?.length || 0,
+        responseStatus: e.responseStatus?.response || 'none',
+        priority: e.priority
+      })),
+      suggestion: {
+        action: action.action,
+        description: action.description,
+        aiAnalysis: null
+      }
+    };
+    
+    proposals.push(proposal);
+  }
+  
+  // AI分析を実行
+  if (!options.json) {
+    console.log(chalk.cyan('🤖 AI分析を実行中...'));
+  }
+  
+  const systemPrompt = generateSystemPrompt(aiInstructions, rules, timezone);
+  
+  for (let i = 0; i < proposals.length; i++) {
+    const proposal = proposals[i];
+    const conflictData = {
+      timeRange: proposal.timeRange,
+      events: proposal.events
+    };
+    
+    const analysisPrompt = generateConflictAnalysisPrompt(conflictData, aiInstructions);
+    const aiResponse = await aiService.analyzeConflictStructured(systemPrompt, analysisPrompt);
+    
+    if (aiResponse.success && aiResponse.result) {
+      const aiResult = aiResponse.result;
+      
+      (proposal as any).suggestion = {
+        action: getActionText(aiResult.recommendation.action, aiResult.recommendation.target),
+        reason: aiResult.recommendation.reason,
+        description: `AI分析による推奨（信頼度: ${aiResult.recommendation.confidence}）`,
+        confidence: aiResult.recommendation.confidence,
+        aiAnalysis: true,
+        alternatives: aiResult.alternatives
+      };
+      
+      if (proposal.events.length === 2) {
+        (proposal.events[0].priority as any).aiScore = aiResult.priority.event1.score;
+        (proposal.events[0].priority as any).aiReason = aiResult.priority.event1.reason;
+        (proposal.events[1].priority as any).aiScore = aiResult.priority.event2.score;
+        (proposal.events[1].priority as any).aiReason = aiResult.priority.event2.reason;
+      }
+    } else {
+      (proposal.suggestion as any).aiError = aiResponse.error;
+    }
+  }
+  
+  return proposals;
+}
+
+/**
+ * ルールベースの提案を生成
+ */
+function generateRuleBasedProposals(conflicts: EventConflict[], rules: any): any[] {
+  const proposals = [];
+  
+  for (const conflict of conflicts) {
+    const eventsWithPriority = conflict.events.map((e: CalendarEvent) => {
+      const priority = calculateEventPriority(e, rules);
+      return { ...e, priority };
+    });
+    
+    const sortedEvents = [...eventsWithPriority].sort((a, b) => b.priority.score - a.priority.score);
+    const priorityDiff = sortedEvents[0].priority.score - sortedEvents[sortedEvents.length - 1].priority.score;
+    const action = determineConflictAction(priorityDiff, rules);
+    
+    const proposal = {
+      conflictId: `conflict-${conflicts.indexOf(conflict)}`,
+      timeRange: formatDateTimeRange(conflict.startTime, conflict.endTime),
+      events: sortedEvents.map(e => ({
+        id: e.id,
+        subject: e.subject,
+        organizer: e.organizer?.emailAddress.address,
+        attendeesCount: e.attendees?.length || 0,
+        responseStatus: e.responseStatus?.response || 'none',
+        priority: e.priority
+      })),
+      suggestion: generateAdvancedSuggestion(sortedEvents, action)
+    };
+    proposals.push(proposal);
+  }
+  
+  return proposals;
+}
+
+/**
+ * 提案を生成（AI統合版）
+ */
+async function generateProposals(
+  conflicts: EventConflict[],
+  config: Configuration,
+  aiService: AIService,
+  options: ScheduleWeekOptions
+): Promise<any[]> {
+  const useAI = aiService.isAvailable();
+  let proposals = [];
+  
+  if (useAI) {
+    try {
+      await createSchedulerAgent(options.rules, options.instructions);
+      
+      if (!options.json) {
+        if (config.aiInstructionsResult.isDefault) {
+          console.log(chalk.gray(`AI指示ファイル: ${config.aiInstructionsResult.filePath} (デフォルト)`));
+        } else {
+          console.log(chalk.cyan(`カスタムAI指示ファイル: ${config.aiInstructionsResult.filePath}`));
+        }
+      }
+      
+      proposals = await generateAIProposals(
+        conflicts,
+        config.rules,
+        config.aiInstructions,
+        aiService,
+        options
+      );
+    } catch (aiError) {
+      if (!options.json) {
+        console.warn(chalk.yellow('⚠️ AI分析中にエラーが発生しました。ルールベースの分析を使用します。'));
+        if (process.env.DEBUG) {
+          console.error(aiError);
+        }
+      }
+      proposals = generateRuleBasedProposals(conflicts, config.rules);
+    }
+  } else {
+    proposals = generateRuleBasedProposals(conflicts, config.rules);
+  }
+  
+  return proposals;
+}
+
+/**
+ * 提案のサマリーを表示
+ */
+function showProposalSummary(proposals: any[], options: ScheduleWeekOptions): void {
+  if (options.json) {
+    return;
+  }
+  
+  console.log(chalk.cyan('🤖 調整案を生成しました'));
+  console.log(chalk.gray('━'.repeat(60)));
+  console.log();
+  
+  console.log(chalk.bold('📋 コンフリクト一覧'));
+  console.log();
+  
+  for (let i = 0; i < proposals.length; i++) {
+    const proposal = proposals[i];
+    console.log(chalk.yellow(`[${i + 1}] ${proposal.timeRange}`));
+    
+    for (const event of proposal.events) {
+      const priorityLabel = event.priority ? `[${event.priority.level}:${event.priority.score}]` : '';
+      console.log(`    • ${event.subject} ${chalk.gray(priorityLabel)}`);
+    }
+    
+    const aiLabel = (proposal.suggestion as any).aiAnalysis ? chalk.blue(' 🤖') : '';
+    console.log(chalk.cyan(`    → ${proposal.suggestion.action}${aiLabel}`));
+    if ((proposal.suggestion as any).confidence) {
+      console.log(chalk.gray(`       信頼度: ${(proposal.suggestion as any).confidence}`));
+    }
+    console.log();
+  }
+  
+  console.log(chalk.gray('━'.repeat(60)));
+  console.log();
+}
+
+/**
+ * 詳細レビューを表示
+ */
+function showDetailedReview(proposals: any[]): void {
+  console.log();
+  console.log(chalk.cyan('📋 提案の詳細'));
+  console.log(chalk.gray('─'.repeat(60)));
+  
+  for (let i = 0; i < proposals.length; i++) {
+    const proposal = proposals[i];
+    console.log();
+    console.log(chalk.yellow(`[コンフリクト ${i + 1}/${proposals.length}]`));
+    console.log(chalk.gray(`時間: ${proposal.timeRange}`));
+    console.log();
+    
+    for (const event of proposal.events) {
+      console.log(`  📅 ${event.subject}`);
+      console.log(`     主催者: ${event.organizer || 'なし'}`);
+      console.log(`     参加者: ${event.attendeesCount}名`);
+      console.log(`     ステータス: ${event.responseStatus}`);
+      if (event.priority) {
+        console.log(`     優先度: ${event.priority.level} (スコア: ${event.priority.score})`);
+        if (event.priority.reasons.length > 0) {
+          console.log(`     判定理由: ${event.priority.reasons.join(', ')}`);
+        }
+      }
+    }
+    
+    console.log();
+    console.log(chalk.cyan('提案:'), proposal.suggestion.action);
+    if ('reason' in proposal.suggestion) {
+      console.log(chalk.gray('理由:'), proposal.suggestion.reason);
+    }
+    
+    // AI分析結果の表示
+    if ((proposal.suggestion as any).aiAnalysis) {
+      console.log(chalk.blue('🤖 AI分析:'), `信頼度: ${(proposal.suggestion as any).confidence || 'N/A'}`);
+      if ((proposal.suggestion as any).alternatives?.length > 0) {
+        console.log(chalk.gray('  代替案:'));
+        (proposal.suggestion as any).alternatives.forEach((alt: string, idx: number) => {
+          console.log(`    ${idx + 1}. ${alt}`);
+        });
+      }
+    }
+  }
+  
+  console.log();
+  console.log(chalk.gray('─'.repeat(60)));
+}
+
+/**
+ * ユーザーインタラクションを処理
+ */
+async function handleUserInteraction(
+  proposals: any[],
+  mgc: MgcService,
+  memory: DecisionMemory,
+  options: ScheduleWeekOptions
+): Promise<void> {
+  // ドライランモードの場合
+  if (options.dryRun) {
+    console.log();
+    console.log(chalk.yellow('ドライランモードのため、実際の変更は行われませんでした'));
+    console.log(chalk.green('✓ スケジュール調整案の生成が完了しました！'));
+    return;
+  }
+  
+  // 学習パターンを表示
+  const suggestedPatterns = await memory.suggestPattern();
+  if (suggestedPatterns.length > 0) {
+    console.log(chalk.yellow('📊 過去の判断パターン：'));
+    for (const pattern of suggestedPatterns) {
+      console.log(`  - ${pattern.description}: 承認率 ${Math.round(pattern.approvalRate * 100)}% (サンプル数: ${pattern.sampleCount})`);
+    }
+    console.log();
+  }
+  
+  // バッチ処理の選択肢を提示
+  const { batchAction } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'batchAction',
+      message: 'どのように処理しますか？',
+      choices: [
+        { name: '✅ すべての提案を適用', value: 'apply_all' },
+        { name: '✏️  個別に修正', value: 'modify_selective' },
+        { name: '📝 詳細を確認', value: 'review_details' },
+        { name: '❌ キャンセル', value: 'cancel' }
+      ]
+    }
+  ]);
+  
+  if (batchAction === 'cancel') {
+    console.log(chalk.yellow('調整をキャンセルしました'));
+    return;
+  }
+  
+  if (batchAction === 'review_details') {
+    showDetailedReview(proposals);
+    
+    const { afterReview } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'afterReview',
+        message: '詳細を確認しました。どのように処理しますか？',
+        choices: [
+          { name: '✅ すべての提案を適用', value: 'apply_all' },
+          { name: '✏️  個別に修正', value: 'modify_selective' },
+          { name: '❌ キャンセル', value: 'cancel' }
+        ]
+      }
+    ]);
+    
+    if (afterReview === 'cancel') {
+      console.log(chalk.yellow('調整をキャンセルしました'));
+      return;
+    }
+    
+    if (afterReview === 'apply_all') {
+      await applyAllProposals(proposals, mgc, memory);
+    } else if (afterReview === 'modify_selective') {
+      await selectiveModification(proposals, mgc, memory);
+    }
+  } else if (batchAction === 'apply_all') {
+    await applyAllProposals(proposals, mgc, memory);
+  } else if (batchAction === 'modify_selective') {
+    await selectiveModification(proposals, mgc, memory);
+  }
+  
+  console.log();
+  console.log(chalk.green('✓ スケジュール調整が完了しました！'));
+  
+  // 統計情報を表示
+  const stats = await memory.getStatistics();
+  if (stats.totalDecisions > 0) {
+    console.log();
+    console.log(chalk.cyan('📈 学習統計（過去30日）：'));
+    console.log(`  総判断数: ${stats.totalDecisions}`);
+    console.log(`  承認率: ${Math.round(stats.approvalRate * 100)}%`);
+    console.log(`  修正率: ${Math.round(stats.modificationRate * 100)}%`);
+    console.log(`  スキップ率: ${Math.round(stats.skipRate * 100)}%`);
+  }
+}
+
 export async function scheduleWeek(options: ScheduleWeekOptions): Promise<void> {
   const mgc = new MgcService();
   const memory = new DecisionMemory();
   const aiService = new AIService(process.env.OUTLOOK_AGENT_MODEL || 'gpt-4o-mini');
   
   try {
-    // 設定の読み込み（環境変数優先）
-    const timezone = process.env.OUTLOOK_AGENT_TIMEZONE || process.env.TZ || 'Asia/Tokyo';
-    const model = process.env.OUTLOOK_AGENT_MODEL || 'gpt-4o-mini';
-    
-    // 開始日の決定
-    const startDate = options.date ? new Date(options.date) : new Date();
-    const days = 7;
+    // 設定を初期化
+    const config = await initializeConfiguration(options);
     
     if (!options.json) {
       console.log(chalk.cyan('📊 週次スケジュール分析中...'));
-      console.log(chalk.gray(`タイムゾーン: ${timezone}`));
-      console.log(chalk.gray(`モデル: ${model}`));
-      console.log(chalk.gray(`期間: ${startDate.toLocaleDateString()} から ${days}日間`));
+      console.log(chalk.gray(`タイムゾーン: ${config.timezone}`));
+      console.log(chalk.gray(`モデル: ${config.model}`));
+      console.log(chalk.gray(`期間: ${config.startDate.toLocaleDateString()} から ${config.days}日間`));
       if (options.dryRun) {
         console.log(chalk.yellow('⚠️  ドライランモード: 実際の変更は行いません'));
       }
       console.log();
     }
     
-    // 予定の取得
-    const events = await mgc.getUpcomingEvents(days);
+    // イベントを取得
+    const events = await fetchEvents(mgc, config.days, options);
     
-    if (!options.json) {
-      console.log(chalk.green(`✓ ${events.length}件の予定を検出`));
-    }
-    
-    // コンフリクトの検出
-    let conflicts = detectConflicts(events);
-    
-    // AI指示設定を読み込んで特別ルールを適用
-    const aiInstructionsResult = await loadAIInstructions(options.instructions);
-    const aiInstructions = aiInstructionsResult.instructions;
-    
-    // ignore_conflictsルールに基づいてコンフリクトをフィルタリング
-    const ignoreRules = aiInstructions.custom_rules?.ignore_conflicts;
-    if (ignoreRules && ignoreRules.length > 0) {
-      conflicts = conflicts.filter(conflict => {
-        // 各ignore_conflictルールをチェック
-        for (const rule of ignoreRules) {
-          let shouldIgnore = true;
-          
-          for (const condition of rule.conditions) {
-            // 曜日のチェック
-            if (condition.day_of_week) {
-              const conflictDate = new Date(conflict.startTime);
-              const dayMap: { [key: string]: number } = {
-                'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
-                'Thursday': 4, 'Friday': 5, 'Saturday': 6
-              };
-              if (dayMap[condition.day_of_week] !== conflictDate.getDay()) {
-                shouldIgnore = false;
-                break;
-              }
-            }
-            
-            // 時刻のチェック
-            if (condition.time) {
-              const conflictDate = new Date(conflict.startTime);
-              const [hour] = condition.time.split(':').map(Number);
-              if (conflictDate.getHours() !== hour) {
-                shouldIgnore = false;
-                break;
-              }
-            }
-            
-            // イベントパターンのチェック
-            if (condition.event1_pattern && condition.event2_pattern) {
-              const hasEvent1 = conflict.events.some(e => 
-                e.subject.includes(condition.event1_pattern!)
-              );
-              const hasEvent2 = conflict.events.some(e => 
-                e.subject.includes(condition.event2_pattern!)
-              );
-              if (!hasEvent1 || !hasEvent2) {
-                shouldIgnore = false;
-                break;
-              }
-            }
-          }
-          
-          if (shouldIgnore) {
-            if (!options.json) {
-              console.log(chalk.gray(`特別ルール適用: ${rule.description}`));
-            }
-            return false; // このコンフリクトを除外
-          }
-        }
-        
-        return true; // このコンフリクトを保持
-      });
-    }
+    // コンフリクトを検出してフィルタリング
+    const conflicts = detectAndFilterConflicts(events, config.aiInstructions, options);
     
     if (conflicts.length === 0) {
       if (options.json) {
@@ -133,165 +479,16 @@ export async function scheduleWeek(options: ScheduleWeekOptions): Promise<void> 
     if (!options.json) {
       console.log(chalk.yellow(`⚠️  ${conflicts.length}件のコンフリクトを発見`));
       console.log();
-    }
-    
-    // スケジューリングルールを読み込む
-    const rulesResult = await loadSchedulingRules(options.rules);
-    const rules = rulesResult.rules;
-    
-    if (!options.json) {
-      if (rulesResult.isDefault) {
-        console.log(chalk.gray(`ルールファイル: ${rulesResult.filePath} (デフォルト)`));
+      
+      if (config.rulesResult.isDefault) {
+        console.log(chalk.gray(`ルールファイル: ${config.rulesResult.filePath} (デフォルト)`));
       } else {
-        console.log(chalk.cyan(`カスタムルールファイル: ${rulesResult.filePath}`));
+        console.log(chalk.cyan(`カスタムルールファイル: ${config.rulesResult.filePath}`));
       }
     }
     
-    // 調整案の生成（AI統合版）
-    const proposals = [];
-    
-    // AIエージェントを使用する場合
-    const useAI = aiService.isAvailable();
-    
-    if (useAI) {
-      try {
-        // AIエージェントを作成（カスタムルールと指示を使用）
-        // const agent = await createSchedulerAgent(options.rules, options.instructions);
-        await createSchedulerAgent(options.rules, options.instructions);
-        
-        if (!options.json && aiInstructionsResult.isDefault) {
-          console.log(chalk.gray(`AI指示ファイル: ${aiInstructionsResult.filePath} (デフォルト)`));
-        } else if (!options.json && !aiInstructionsResult.isDefault) {
-          console.log(chalk.cyan(`カスタムAI指示ファイル: ${aiInstructionsResult.filePath}`));
-        }
-        
-        // 各コンフリクトを分析
-        for (const conflict of conflicts) {
-          // イベントの優先度を計算
-          const eventsWithPriority = conflict.events.map(e => {
-            const priority = calculateEventPriority(e, rules);
-            return {
-              ...e,
-              priority
-            };
-          });
-          
-          // 優先度でソート
-          const sortedEvents = [...eventsWithPriority].sort((a, b) => b.priority.score - a.priority.score);
-          const priorityDiff = sortedEvents[0].priority.score - sortedEvents[sortedEvents.length - 1].priority.score;
-          const action = determineConflictAction(priorityDiff, rules);
-          
-          const proposal = {
-            conflictId: `conflict-${conflicts.indexOf(conflict)}`,
-            timeRange: formatDateTimeRange(conflict.startTime, conflict.endTime),
-            events: sortedEvents.map(e => ({
-              id: e.id,
-              subject: e.subject,
-              organizer: e.organizer?.emailAddress.address,
-              attendeesCount: e.attendees?.length || 0,
-              responseStatus: e.responseStatus?.response || 'none',
-              priority: e.priority
-            })),
-            suggestion: {
-              action: action.action,
-              description: action.description,
-              aiAnalysis: null // AI分析結果を格納予定
-            }
-          };
-          
-          proposals.push(proposal);
-        }
-        
-        if (!options.json) {
-          console.log(chalk.cyan('🤖 AI分析を実行中...'));
-        }
-        
-        // AI分析用のプロンプトを生成
-        if (!options.json) {
-          console.log(chalk.cyan('🤖 AI分析を実行中...'));
-        }
-        
-        const systemPrompt = generateSystemPrompt(aiInstructions, rules, timezone);
-        
-        for (let i = 0; i < proposals.length; i++) {
-          const proposal = proposals[i];
-          const conflictData = {
-            timeRange: proposal.timeRange,
-            events: proposal.events
-          };
-          
-          // カスタマイズされたプロンプトを生成
-          const analysisPrompt = generateConflictAnalysisPrompt(conflictData, aiInstructions);
-          
-          // AI分析を実行
-          const aiResponse = await aiService.analyzeConflictStructured(systemPrompt, analysisPrompt);
-          
-          if (aiResponse.success && aiResponse.result) {
-            // AIの分析結果を使用
-            const aiResult = aiResponse.result;
-            
-            // AIの推奨を提案に反映
-            (proposal as any).suggestion = {
-              action: getActionText(aiResult.recommendation.action, aiResult.recommendation.target),
-              reason: aiResult.recommendation.reason,
-              description: `AI分析による推奨（信頼度: ${aiResult.recommendation.confidence}）`,
-              confidence: aiResult.recommendation.confidence,
-              aiAnalysis: true,
-              alternatives: aiResult.alternatives
-            };
-            
-            // イベントの優先度をAI分析結果で更新
-            if (proposal.events.length === 2) {
-              (proposal.events[0].priority as any).aiScore = aiResult.priority.event1.score;
-              (proposal.events[0].priority as any).aiReason = aiResult.priority.event1.reason;
-              (proposal.events[1].priority as any).aiScore = aiResult.priority.event2.score;
-              (proposal.events[1].priority as any).aiReason = aiResult.priority.event2.reason;
-            }
-          } else {
-            // AI分析が失敗した場合はルールベースの結果を維持
-            (proposal.suggestion as any).aiError = aiResponse.error;
-          }
-        }
-        
-      } catch (aiError) {
-        if (!options.json) {
-          console.warn(chalk.yellow('⚠️ AI分析中にエラーが発生しました。ルールベースの分析を使用します。'));
-          if (process.env.DEBUG) {
-            console.error(aiError);
-          }
-        }
-      }
-    }
-    
-    // AIが使用できない場合、またはエラーの場合はルールベースの分析
-    if (!useAI || proposals.length === 0) {
-      for (const conflict of conflicts) {
-        // ルールベースで優先度を計算
-        const eventsWithPriority = conflict.events.map(e => {
-          const priority = calculateEventPriority(e, rules);
-          return { ...e, priority };
-        });
-        
-        const sortedEvents = [...eventsWithPriority].sort((a, b) => b.priority.score - a.priority.score);
-        const priorityDiff = sortedEvents[0].priority.score - sortedEvents[sortedEvents.length - 1].priority.score;
-        const action = determineConflictAction(priorityDiff, rules);
-        
-        const proposal = {
-          conflictId: `conflict-${conflicts.indexOf(conflict)}`,
-          timeRange: formatDateTimeRange(conflict.startTime, conflict.endTime),
-          events: sortedEvents.map(e => ({
-            id: e.id,
-            subject: e.subject,
-            organizer: e.organizer?.emailAddress.address,
-            attendeesCount: e.attendees?.length || 0,
-            responseStatus: e.responseStatus?.response || 'none',
-            priority: e.priority
-          })),
-          suggestion: generateAdvancedSuggestion(sortedEvents, action)
-        };
-        proposals.push(proposal);
-      }
-    }
+    // 提案を生成
+    const proposals = await generateProposals(conflicts, config, aiService, options);
     
     // JSON出力モード
     if (options.json) {
@@ -301,177 +498,17 @@ export async function scheduleWeek(options: ScheduleWeekOptions): Promise<void> 
         conflicts: conflicts.length,
         proposals,
         dryRun: options.dryRun || false,
-        timezone,
-        model
+        timezone: config.timezone,
+        model: config.model
       }, null, 2));
       return;
     }
     
-    // バッチ承認モード
-    console.log(chalk.cyan('🤖 調整案を生成しました'));
-    console.log(chalk.gray('━'.repeat(60)));
-    console.log();
+    // 提案のサマリーを表示
+    showProposalSummary(proposals, options);
     
-    // 全提案のサマリー表示
-    console.log(chalk.bold('📋 コンフリクト一覧'));
-    console.log();
-    
-    for (let i = 0; i < proposals.length; i++) {
-      const proposal = proposals[i];
-      console.log(chalk.yellow(`[${i + 1}] ${proposal.timeRange}`));
-      
-      // 関連イベントを簡潔に表示
-      for (const event of proposal.events) {
-        const priorityLabel = event.priority ? `[${event.priority.level}:${event.priority.score}]` : '';
-        console.log(`    • ${event.subject} ${chalk.gray(priorityLabel)}`);
-      }
-      
-      // 提案内容を表示
-      const aiLabel = (proposal.suggestion as any).aiAnalysis ? chalk.blue(' 🤖') : '';
-      console.log(chalk.cyan(`    → ${proposal.suggestion.action}${aiLabel}`));
-      if ((proposal.suggestion as any).confidence) {
-        console.log(chalk.gray(`       信頼度: ${(proposal.suggestion as any).confidence}`));
-      }
-      console.log();
-    }
-    
-    console.log(chalk.gray('━'.repeat(60)));
-    console.log();
-    
-    // 学習パターンを読み込み
-    const suggestedPatterns = await memory.suggestPattern();
-    if (suggestedPatterns.length > 0) {
-      console.log(chalk.yellow('📊 過去の判断パターン：'));
-      for (const pattern of suggestedPatterns) {
-        console.log(`  - ${pattern.description}: 承認率 ${Math.round(pattern.approvalRate * 100)}% (サンプル数: ${pattern.sampleCount})`);
-      }
-      console.log();
-    }
-    
-    // ドライランモードの場合は全提案を実行せずに終了
-    if (options.dryRun) {
-      console.log();
-      console.log(chalk.yellow('ドライランモードのため、実際の変更は行われませんでした'));
-      console.log(chalk.green('✓ スケジュール調整案の生成が完了しました！'));
-      return;
-    }
-    
-    // バッチ処理の選択肢を提示
-    const { batchAction } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'batchAction',
-        message: 'どのように処理しますか？',
-        choices: [
-          { name: '✅ すべての提案を適用', value: 'apply_all' },
-          { name: '✏️  個別に修正', value: 'modify_selective' },
-          { name: '📝 詳細を確認', value: 'review_details' },
-          { name: '❌ キャンセル', value: 'cancel' }
-        ]
-      }
-    ]);
-    
-    if (batchAction === 'cancel') {
-      console.log(chalk.yellow('調整をキャンセルしました'));
-      return;
-    }
-    
-    // 詳細確認モード
-    if (batchAction === 'review_details') {
-      console.log();
-      console.log(chalk.cyan('📋 提案の詳細'));
-      console.log(chalk.gray('─'.repeat(60)));
-      
-      for (let i = 0; i < proposals.length; i++) {
-        const proposal = proposals[i];
-        console.log();
-        console.log(chalk.yellow(`[コンフリクト ${i + 1}/${proposals.length}]`));
-        console.log(chalk.gray(`時間: ${proposal.timeRange}`));
-        console.log();
-        
-        for (const event of proposal.events) {
-          console.log(`  📅 ${event.subject}`);
-          console.log(`     主催者: ${event.organizer || 'なし'}`);
-          console.log(`     参加者: ${event.attendeesCount}名`);
-          console.log(`     ステータス: ${event.responseStatus}`);
-          if (event.priority) {
-            console.log(`     優先度: ${event.priority.level} (スコア: ${event.priority.score})`);
-            if (event.priority.reasons.length > 0) {
-              console.log(`     判定理由: ${event.priority.reasons.join(', ')}`);
-            }
-          }
-        }
-        
-        console.log();
-        console.log(chalk.cyan('提案:'), proposal.suggestion.action);
-        if ('reason' in proposal.suggestion) {
-          console.log(chalk.gray('理由:'), proposal.suggestion.reason);
-        }
-        
-        // AI分析結果の表示
-        if ((proposal.suggestion as any).aiAnalysis) {
-          console.log(chalk.blue('🤖 AI分析:'), `信頼度: ${(proposal.suggestion as any).confidence || 'N/A'}`);
-          if ((proposal.suggestion as any).alternatives?.length > 0) {
-            console.log(chalk.gray('  代替案:'));
-            (proposal.suggestion as any).alternatives.forEach((alt: string, idx: number) => {
-              console.log(`    ${idx + 1}. ${alt}`);
-            });
-          }
-        }
-      }
-      
-      console.log();
-      console.log(chalk.gray('─'.repeat(60)));
-      
-      // 詳細確認後に再度選択肢を提示
-      const { afterReview } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'afterReview',
-          message: '詳細を確認しました。どのように処理しますか？',
-          choices: [
-            { name: '✅ すべての提案を適用', value: 'apply_all' },
-            { name: '✏️  個別に修正', value: 'modify_selective' },
-            { name: '❌ キャンセル', value: 'cancel' }
-          ]
-        }
-      ]);
-      
-      if (afterReview === 'cancel') {
-        console.log(chalk.yellow('調整をキャンセルしました'));
-        return;
-      }
-      
-      if (afterReview === 'apply_all') {
-        await applyAllProposals(proposals, mgc, memory);
-      } else if (afterReview === 'modify_selective') {
-        await selectiveModification(proposals, mgc, memory);
-      }
-    }
-    
-    // すべての提案を適用
-    else if (batchAction === 'apply_all') {
-      await applyAllProposals(proposals, mgc, memory);
-    }
-    
-    // 個別修正モード
-    else if (batchAction === 'modify_selective') {
-      await selectiveModification(proposals, mgc, memory);
-    }
-    
-    console.log();
-    console.log(chalk.green('✓ スケジュール調整が完了しました！'));
-    
-    // 統計情報を表示
-    const stats = await memory.getStatistics();
-    if (stats.totalDecisions > 0) {
-      console.log();
-      console.log(chalk.cyan('📈 学習統計（過去30日）：'));
-      console.log(`  総判断数: ${stats.totalDecisions}`);
-      console.log(`  承認率: ${Math.round(stats.approvalRate * 100)}%`);
-      console.log(`  修正率: ${Math.round(stats.modificationRate * 100)}%`);
-      console.log(`  スキップ率: ${Math.round(stats.skipRate * 100)}%`);
-    }
+    // ユーザーインタラクションを処理
+    await handleUserInteraction(proposals, mgc, memory, options);
     
   } catch (error: any) {
     if (options.json) {
