@@ -31,6 +31,42 @@ interface Configuration {
   rulesResult: any;
 }
 
+interface ProposalSuggestion {
+  action: string;
+  reason?: string;
+  description?: string;
+  confidence?: string;
+  aiAnalysis?: boolean | null;
+  alternatives?: string[];
+  aiError?: any;
+  targetEventId?: string;
+  specificTime?: string;
+}
+
+interface EventPriority {
+  level: string;
+  score: number;
+  reasons: string[];
+  aiScore?: number;
+  aiReason?: string;
+}
+
+interface ProposalEvent {
+  id: string;
+  subject: string;
+  organizer?: string;
+  attendeesCount: number;
+  responseStatus: string;
+  priority?: EventPriority;
+}
+
+interface Proposal {
+  conflictId: string;
+  timeRange: string;
+  events: ProposalEvent[];
+  suggestion: ProposalSuggestion;
+}
+
 /**
  * 設定を初期化
  */
@@ -94,7 +130,7 @@ async function generateAIProposals(
   aiInstructions: any,
   aiService: AIService,
   options: ScheduleWeekOptions
-): Promise<any[]> {
+): Promise<Proposal[]> {
   const proposals = [];
   const timezone = process.env.OUTLOOK_AGENT_TIMEZONE || 'Asia/Tokyo';
   
@@ -109,7 +145,7 @@ async function generateAIProposals(
     const priorityDiff = sortedEvents[0].priority.score - sortedEvents[sortedEvents.length - 1].priority.score;
     const action = determineConflictAction(priorityDiff, rules);
     
-    const proposal = {
+    const proposal: Proposal = {
       conflictId: `conflict-${conflicts.indexOf(conflict)}`,
       timeRange: formatDateTimeRange(conflict.startTime, conflict.endTime),
       events: sortedEvents.map(e => ({
@@ -150,7 +186,7 @@ async function generateAIProposals(
     if (aiResponse.success && aiResponse.result) {
       const aiResult = aiResponse.result;
       
-      (proposal as any).suggestion = {
+      proposal.suggestion = {
         action: getActionText(aiResult.recommendation.action, aiResult.recommendation.target),
         reason: aiResult.recommendation.reason,
         description: `AI分析による推奨（信頼度: ${aiResult.recommendation.confidence}）`,
@@ -160,13 +196,17 @@ async function generateAIProposals(
       };
       
       if (proposal.events.length === 2) {
-        (proposal.events[0].priority as any).aiScore = aiResult.priority.event1.score;
-        (proposal.events[0].priority as any).aiReason = aiResult.priority.event1.reason;
-        (proposal.events[1].priority as any).aiScore = aiResult.priority.event2.score;
-        (proposal.events[1].priority as any).aiReason = aiResult.priority.event2.reason;
+        if (proposal.events[0].priority) {
+          proposal.events[0].priority.aiScore = aiResult.priority.event1.score;
+          proposal.events[0].priority.aiReason = aiResult.priority.event1.reason;
+        }
+        if (proposal.events[1].priority) {
+          proposal.events[1].priority.aiScore = aiResult.priority.event2.score;
+          proposal.events[1].priority.aiReason = aiResult.priority.event2.reason;
+        }
       }
     } else {
-      (proposal.suggestion as any).aiError = aiResponse.error;
+      proposal.suggestion.aiError = aiResponse.error;
     }
   }
   
@@ -176,7 +216,7 @@ async function generateAIProposals(
 /**
  * ルールベースの提案を生成
  */
-function generateRuleBasedProposals(conflicts: EventConflict[], rules: any): any[] {
+function generateRuleBasedProposals(conflicts: EventConflict[], rules: any): Proposal[] {
   const proposals = [];
   
   for (const conflict of conflicts) {
@@ -189,7 +229,7 @@ function generateRuleBasedProposals(conflicts: EventConflict[], rules: any): any
     const priorityDiff = sortedEvents[0].priority.score - sortedEvents[sortedEvents.length - 1].priority.score;
     const action = determineConflictAction(priorityDiff, rules);
     
-    const proposal = {
+    const proposal: Proposal = {
       conflictId: `conflict-${conflicts.indexOf(conflict)}`,
       timeRange: formatDateTimeRange(conflict.startTime, conflict.endTime),
       events: sortedEvents.map(e => ({
@@ -209,6 +249,43 @@ function generateRuleBasedProposals(conflicts: EventConflict[], rules: any): any
 }
 
 /**
+ * AI分析を試行
+ */
+async function tryAIAnalysis(
+  conflicts: EventConflict[],
+  config: Configuration,
+  aiService: AIService,
+  options: ScheduleWeekOptions
+): Promise<Proposal[] | null> {
+  try {
+    await createSchedulerAgent(options.rules, options.instructions);
+    
+    if (!options.json) {
+      const message = config.aiInstructionsResult.isDefault
+        ? `AI指示ファイル: ${config.aiInstructionsResult.filePath} (デフォルト)`
+        : `カスタムAI指示ファイル: ${config.aiInstructionsResult.filePath}`;
+      console.log(chalk.gray(message));
+    }
+    
+    return await generateAIProposals(
+      conflicts,
+      config.rules,
+      config.aiInstructions,
+      aiService,
+      options
+    );
+  } catch (aiError) {
+    if (!options.json) {
+      console.warn(chalk.yellow('⚠️ AI分析中にエラーが発生しました。ルールベースの分析を使用します。'));
+      if (process.env.DEBUG) {
+        console.error(aiError);
+      }
+    }
+    return null;
+  }
+}
+
+/**
  * 提案を生成（AI統合版）
  */
 async function generateProposals(
@@ -216,49 +293,19 @@ async function generateProposals(
   config: Configuration,
   aiService: AIService,
   options: ScheduleWeekOptions
-): Promise<any[]> {
-  const useAI = aiService.isAvailable();
-  let proposals = [];
-  
-  if (useAI) {
-    try {
-      await createSchedulerAgent(options.rules, options.instructions);
-      
-      if (!options.json) {
-        if (config.aiInstructionsResult.isDefault) {
-          console.log(chalk.gray(`AI指示ファイル: ${config.aiInstructionsResult.filePath} (デフォルト)`));
-        } else {
-          console.log(chalk.cyan(`カスタムAI指示ファイル: ${config.aiInstructionsResult.filePath}`));
-        }
-      }
-      
-      proposals = await generateAIProposals(
-        conflicts,
-        config.rules,
-        config.aiInstructions,
-        aiService,
-        options
-      );
-    } catch (aiError) {
-      if (!options.json) {
-        console.warn(chalk.yellow('⚠️ AI分析中にエラーが発生しました。ルールベースの分析を使用します。'));
-        if (process.env.DEBUG) {
-          console.error(aiError);
-        }
-      }
-      proposals = generateRuleBasedProposals(conflicts, config.rules);
-    }
-  } else {
-    proposals = generateRuleBasedProposals(conflicts, config.rules);
+): Promise<Proposal[]> {
+  if (!aiService.isAvailable()) {
+    return generateRuleBasedProposals(conflicts, config.rules);
   }
   
-  return proposals;
+  const aiProposals = await tryAIAnalysis(conflicts, config, aiService, options);
+  return aiProposals || generateRuleBasedProposals(conflicts, config.rules);
 }
 
 /**
  * 提案のサマリーを表示
  */
-function showProposalSummary(proposals: any[], options: ScheduleWeekOptions): void {
+function showProposalSummary(proposals: Proposal[], options: ScheduleWeekOptions): void {
   if (options.json) {
     return;
   }
@@ -279,10 +326,10 @@ function showProposalSummary(proposals: any[], options: ScheduleWeekOptions): vo
       console.log(`    • ${event.subject} ${chalk.gray(priorityLabel)}`);
     }
     
-    const aiLabel = (proposal.suggestion as any).aiAnalysis ? chalk.blue(' 🤖') : '';
+    const aiLabel = proposal.suggestion.aiAnalysis ? chalk.blue(' 🤖') : '';
     console.log(chalk.cyan(`    → ${proposal.suggestion.action}${aiLabel}`));
-    if ((proposal.suggestion as any).confidence) {
-      console.log(chalk.gray(`       信頼度: ${(proposal.suggestion as any).confidence}`));
+    if (proposal.suggestion.confidence) {
+      console.log(chalk.gray(`       信頼度: ${proposal.suggestion.confidence}`));
     }
     console.log();
   }
@@ -292,9 +339,25 @@ function showProposalSummary(proposals: any[], options: ScheduleWeekOptions): vo
 }
 
 /**
+ * イベントの詳細を表示
+ */
+function showEventDetails(event: ProposalEvent): void {
+  console.log(`  📅 ${event.subject}`);
+  console.log(`     主催者: ${event.organizer || 'なし'}`);
+  console.log(`     参加者: ${event.attendeesCount}名`);
+  console.log(`     ステータス: ${event.responseStatus}`);
+  if (event.priority) {
+    console.log(`     優先度: ${event.priority.level} (スコア: ${event.priority.score})`);
+    if (event.priority.reasons.length > 0) {
+      console.log(`     判定理由: ${event.priority.reasons.join(', ')}`);
+    }
+  }
+}
+
+/**
  * 詳細レビューを表示
  */
-function showDetailedReview(proposals: any[]): void {
+function showDetailedReview(proposals: Proposal[]): void {
   console.log();
   console.log(chalk.cyan('📋 提案の詳細'));
   console.log(chalk.gray('─'.repeat(60)));
@@ -307,16 +370,7 @@ function showDetailedReview(proposals: any[]): void {
     console.log();
     
     for (const event of proposal.events) {
-      console.log(`  📅 ${event.subject}`);
-      console.log(`     主催者: ${event.organizer || 'なし'}`);
-      console.log(`     参加者: ${event.attendeesCount}名`);
-      console.log(`     ステータス: ${event.responseStatus}`);
-      if (event.priority) {
-        console.log(`     優先度: ${event.priority.level} (スコア: ${event.priority.score})`);
-        if (event.priority.reasons.length > 0) {
-          console.log(`     判定理由: ${event.priority.reasons.join(', ')}`);
-        }
-      }
+      showEventDetails(event);
     }
     
     console.log();
@@ -326,11 +380,11 @@ function showDetailedReview(proposals: any[]): void {
     }
     
     // AI分析結果の表示
-    if ((proposal.suggestion as any).aiAnalysis) {
-      console.log(chalk.blue('🤖 AI分析:'), `信頼度: ${(proposal.suggestion as any).confidence || 'N/A'}`);
-      if ((proposal.suggestion as any).alternatives?.length > 0) {
+    if (proposal.suggestion.aiAnalysis) {
+      console.log(chalk.blue('🤖 AI分析:'), `信頼度: ${proposal.suggestion.confidence || 'N/A'}`);
+      if (proposal.suggestion.alternatives && proposal.suggestion.alternatives.length > 0) {
         console.log(chalk.gray('  代替案:'));
-        (proposal.suggestion as any).alternatives.forEach((alt: string, idx: number) => {
+        proposal.suggestion.alternatives.forEach((alt: string, idx: number) => {
           console.log(`    ${idx + 1}. ${alt}`);
         });
       }
@@ -345,7 +399,7 @@ function showDetailedReview(proposals: any[]): void {
  * ユーザーインタラクションを処理
  */
 async function handleUserInteraction(
-  proposals: any[],
+  proposals: Proposal[],
   mgc: MgcService,
   memory: DecisionMemory,
   options: ScheduleWeekOptions
@@ -527,7 +581,7 @@ export async function scheduleWeek(options: ScheduleWeekOptions): Promise<void> 
  * 提案された変更を適用
  */
 async function applyProposedChanges(
-  proposal: any,
+  proposal: Proposal,
   mgc: MgcService,
   dryRun?: boolean
 ): Promise<{ success: boolean; details?: string; error?: string }> {
@@ -627,7 +681,7 @@ async function applyProposedChanges(
 /**
  * 提案を手動で修正
  */
-async function modifyProposal(proposal: any): Promise<any> {
+async function modifyProposal(proposal: Proposal): Promise<Proposal | null> {
   const { action } = await inquirer.prompt([
     {
       type: 'list',
@@ -713,7 +767,7 @@ function getActionText(action: string, target: string): string {
 }
 
 // 高度な提案生成（ルールベース）
-function generateAdvancedSuggestion(sortedEvents: any[], action: any): { action: string; reason: string; description?: string } {
+function generateAdvancedSuggestion(sortedEvents: any[], action: any): ProposalSuggestion {
   const highPriorityEvent = sortedEvents[0];
   const lowPriorityEvent = sortedEvents[sortedEvents.length - 1];
   
@@ -742,7 +796,7 @@ function generateAdvancedSuggestion(sortedEvents: any[], action: any): { action:
  * すべての提案を適用
  */
 async function applyAllProposals(
-  proposals: any[],
+  proposals: Proposal[],
   mgc: MgcService,
   memory: DecisionMemory
 ): Promise<void> {
@@ -798,7 +852,7 @@ async function applyAllProposals(
  * 選択的修正モード
  */
 async function selectiveModification(
-  proposals: any[],
+  proposals: Proposal[],
   mgc: MgcService,
   memory: DecisionMemory
 ): Promise<void> {

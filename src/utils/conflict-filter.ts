@@ -18,7 +18,7 @@ interface AIInstructions {
 }
 
 export class ConflictFilter {
-  private ignoreRules: IgnoreRule[];
+  private readonly ignoreRules: IgnoreRule[];
 
   constructor(aiInstructions: AIInstructions) {
     this.ignoreRules = aiInstructions.custom_rules?.ignore_conflicts || [];
