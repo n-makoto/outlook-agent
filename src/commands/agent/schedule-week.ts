@@ -610,11 +610,17 @@ async function applyProposedChanges(
     
     // リスケジュールの場合
     if (suggestion.action.includes('リスケジュール')) {
-      // 低優先度のイベントを特定
-      const eventToReschedule = proposal.events.reduce((prev: ProposalEvent, curr: ProposalEvent) => 
-        (prev.priority?.score || 0) < (curr.priority?.score || 0) ? prev : curr,
-        proposal.events[0]
+      // 最高優先度を特定
+      const highestPriorityScore = Math.max(...proposal.events.map(e => e.priority?.score || 0));
+      
+      // 最高優先度未満のすべてのイベントを特定
+      const eventsToReschedule = proposal.events.filter(e => 
+        (e.priority?.score || 0) < highestPriorityScore
       );
+      
+      // 複数のイベントをリスケジュールする場合、まず最初のものから処理
+      // TODO: 将来的には複数イベントの同時リスケジュールに対応
+      const eventToReschedule = eventsToReschedule[0];
       
       // イベント詳細を取得してattendees情報を取得
       const eventDetails = await mgc.getEvent(eventToReschedule.id);
@@ -667,10 +673,17 @@ async function applyProposedChanges(
     
     // 辞退の場合
     if (suggestion.action.includes('辞退')) {
-      const eventToDecline = proposal.events.reduce((prev: ProposalEvent, curr: ProposalEvent) => 
-        (prev.priority?.score || 0) < (curr.priority?.score || 0) ? prev : curr,
-        proposal.events[0]
+      // 最高優先度を特定
+      const highestPriorityScore = Math.max(...proposal.events.map(e => e.priority?.score || 0));
+      
+      // 最高優先度未満のすべてのイベントを特定
+      const eventsToDecline = proposal.events.filter(e => 
+        (e.priority?.score || 0) < highestPriorityScore
       );
+      
+      // 複数のイベントを辞退する場合、まず最初のものから処理
+      // TODO: 将来的には複数イベントの同時辞退に対応
+      const eventToDecline = eventsToDecline[0];
       
       // イベントへの返信を更新（辞退）
       await mgc.updateEventResponse(eventToDecline.id, 'decline');
@@ -774,11 +787,20 @@ async function modifyProposal(proposal: Proposal): Promise<Proposal | null> {
 function getActionText(action: string, target: string): string {
   switch (action) {
     case 'reschedule':
-      return `「${target}」を別の時間にリスケジュール`;
+      // targetに複数のイベントが含まれている場合を考慮
+      if (target.includes('、')) {
+        return `${target}を別の時間にリスケジュール`;
+      } else {
+        return `「${target}」を別の時間にリスケジュール`;
+      }
     case 'decline':
-      return `「${target}」を辞退`;
+      if (target.includes('、')) {
+        return `${target}を辞退`;
+      } else {
+        return `「${target}」を辞退`;
+      }
     case 'keep':
-      return `両方の会議を維持（手動調整が必要）`;
+      return `すべての会議を維持（手動調整が必要）`;
     default:
       return action;
   }
@@ -787,20 +809,42 @@ function getActionText(action: string, target: string): string {
 // 高度な提案生成（ルールベース）
 function generateAdvancedSuggestion(sortedEvents: any[], action: any): ProposalSuggestion {
   const highPriorityEvent = sortedEvents[0];
-  const lowPriorityEvent = sortedEvents[sortedEvents.length - 1];
+  const lowPriorityEvents = sortedEvents.slice(1); // 最高優先度以外のすべての予定
   
   let suggestionAction = '';
   let reason = '';
   
   if (action.action === 'reschedule_lower_priority') {
-    suggestionAction = `「${lowPriorityEvent.subject}」を別の時間にリスケジュール`;
-    reason = `「${highPriorityEvent.subject}」の方が優先度が高いため（${highPriorityEvent.priority.level}: ${highPriorityEvent.priority.score} vs ${lowPriorityEvent.priority.level}: ${lowPriorityEvent.priority.score}）`;
+    if (lowPriorityEvents.length === 1) {
+      // 2つの予定の場合の既存ロジック
+      const lowPriorityEvent = lowPriorityEvents[0];
+      suggestionAction = `「${lowPriorityEvent.subject}」を別の時間にリスケジュール`;
+      reason = `「${highPriorityEvent.subject}」の方が優先度が高いため（${highPriorityEvent.priority.level}: ${highPriorityEvent.priority.score} vs ${lowPriorityEvent.priority.level}: ${lowPriorityEvent.priority.score}）`;
+    } else {
+      // 3つ以上の予定の場合は複数をリスケジュール
+      const eventNames = lowPriorityEvents.map(e => `「${e.subject}」`).join('、');
+      suggestionAction = `${eventNames}を別の時間にリスケジュール`;
+      reason = `「${highPriorityEvent.subject}」の方が優先度が高いため（${highPriorityEvent.priority.level}: ${highPriorityEvent.priority.score}）`;
+    }
   } else if (action.action === 'suggest_reschedule') {
-    suggestionAction = `「${lowPriorityEvent.subject}」のリスケジュールを検討`;
-    reason = `優先度の差があるため（${highPriorityEvent.priority.score - lowPriorityEvent.priority.score}ポイント差）`;
+    if (lowPriorityEvents.length === 1) {
+      const lowPriorityEvent = lowPriorityEvents[0];
+      suggestionAction = `「${lowPriorityEvent.subject}」のリスケジュールを検討`;
+      reason = `優先度の差があるため（${highPriorityEvent.priority.score - lowPriorityEvent.priority.score}ポイント差）`;
+    } else {
+      const eventNames = lowPriorityEvents.map(e => `「${e.subject}」`).join('、');
+      suggestionAction = `${eventNames}のリスケジュールを検討`;
+      reason = `「${highPriorityEvent.subject}」の方が優先度が高いため`;
+    }
   } else {
-    suggestionAction = `手動での判断が必要`;
-    reason = `優先度が近いため、ビジネス判断が必要（${highPriorityEvent.priority.score} vs ${lowPriorityEvent.priority.score}）`;
+    if (lowPriorityEvents.length === 1) {
+      const lowPriorityEvent = lowPriorityEvents[0];
+      suggestionAction = `手動での判断が必要`;
+      reason = `優先度が近いため、ビジネス判断が必要（${highPriorityEvent.priority.score} vs ${lowPriorityEvent.priority.score}）`;
+    } else {
+      suggestionAction = `手動での判断が必要`;
+      reason = `複数の予定が同じ優先度のため、ビジネス判断が必要`;
+    }
   }
   
   return {
