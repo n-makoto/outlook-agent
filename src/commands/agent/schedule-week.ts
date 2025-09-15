@@ -619,7 +619,9 @@ async function applyProposedChanges(
       );
       
       // 複数のイベントをリスケジュールする場合、まず最初のものから処理
-      // TODO: 将来的には複数イベントの同時リスケジュールに対応
+      // TODO: 複数イベントの同時リスケジュールに対応
+      // 実装案: 1) 全参加者の空き時間を一括取得、2) 複数イベントを順次処理するバッチ処理、
+      // 3) 失敗時のロールバック機能、4) ユーザーへの進捗通知機能を追加
       const eventToReschedule = eventsToReschedule[0];
       
       // イベント詳細を取得してattendees情報を取得
@@ -682,7 +684,9 @@ async function applyProposedChanges(
       );
       
       // 複数のイベントを辞退する場合、まず最初のものから処理
-      // TODO: 将来的には複数イベントの同時辞退に対応
+      // TODO: 複数イベントの同時辞退に対応
+      // 実装案: 1) バッチ辞退API呼び出し、2) 統一された辞退理由の送信、
+      // 3) 失敗したイベントの個別処理、4) 辞退完了の一括通知機能を追加
       const eventToDecline = eventsToDecline[0];
       
       // イベントへの返信を更新（辞退）
@@ -836,15 +840,13 @@ function generateAdvancedSuggestion(sortedEvents: any[], action: any): ProposalS
       suggestionAction = `${eventNames}のリスケジュールを検討`;
       reason = `「${highPriorityEvent.subject}」の方が優先度が高いため`;
     }
+  } else if (lowPriorityEvents.length === 1) {
+    const lowPriorityEvent = lowPriorityEvents[0];
+    suggestionAction = `手動での判断が必要`;
+    reason = `優先度が近いため、ビジネス判断が必要（${highPriorityEvent.priority.score} vs ${lowPriorityEvent.priority.score}）`;
   } else {
-    if (lowPriorityEvents.length === 1) {
-      const lowPriorityEvent = lowPriorityEvents[0];
-      suggestionAction = `手動での判断が必要`;
-      reason = `優先度が近いため、ビジネス判断が必要（${highPriorityEvent.priority.score} vs ${lowPriorityEvent.priority.score}）`;
-    } else {
-      suggestionAction = `手動での判断が必要`;
-      reason = `複数の予定が同じ優先度のため、ビジネス判断が必要`;
-    }
+    suggestionAction = `手動での判断が必要`;
+    reason = `複数の予定が同じ優先度のため、ビジネス判断が必要`;
   }
   
   return {
