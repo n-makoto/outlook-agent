@@ -594,110 +594,267 @@ export async function scheduleWeek(options: ScheduleWeekOptions): Promise<void> 
 }
 
 /**
- * 提案された変更を適用
+ * イベント処理結果のインターフェース
+ */
+interface EventProcessResult {
+  eventId: string;
+  eventSubject: string;
+  success: boolean;
+  details?: string;
+  error?: string;
+}
+
+/**
+ * 複数イベント処理の集約結果
+ */
+interface ApplyResult {
+  success: boolean;
+  details?: string;
+  error?: string;
+  results?: EventProcessResult[];
+  summary?: {
+    total: number;
+    successful: number;
+    failed: number;
+  };
+}
+
+/**
+ * 単一イベントのリスケジュール処理
+ */
+async function rescheduleEvent(
+  event: ProposalEvent,
+  mgc: MgcService
+): Promise<EventProcessResult> {
+  try {
+    // イベント詳細を取得してattendees情報を取得
+    const eventDetails = await mgc.getEvent(event.id);
+    const attendees = eventDetails.attendees || [];
+    const attendeeEmails = attendees.map((a: any) => a.emailAddress.address);
+    
+    const meetingTimes = await mgc.findMeetingTimes({
+      attendees: attendeeEmails.map((email: string) => ({
+        emailAddress: { address: email }
+      })),
+      timeConstraint: {
+        timeslots: [{
+          start: { 
+            dateTime: new Date().toISOString(),
+            timeZone: process.env.OUTLOOK_AGENT_TIMEZONE || 'Asia/Tokyo'
+          },
+          end: {
+            dateTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+            timeZone: process.env.OUTLOOK_AGENT_TIMEZONE || 'Asia/Tokyo'
+          }
+        }]
+      },
+      meetingDuration: 'PT30M',
+      maxCandidates: 5
+    });
+    
+    if (meetingTimes.meetingTimeSuggestions && meetingTimes.meetingTimeSuggestions.length > 0) {
+      const newTime = meetingTimes.meetingTimeSuggestions[0];
+      
+      // イベントを更新
+      await mgc.updateEvent(event.id, {
+        start: newTime.meetingTimeSlot.start,
+        end: newTime.meetingTimeSlot.end,
+      });
+      
+      return {
+        eventId: event.id,
+        eventSubject: event.subject,
+        success: true,
+        details: `${new Date(newTime.meetingTimeSlot.start.dateTime).toLocaleString('ja-JP')}にリスケジュール完了`
+      };
+    } else {
+      return {
+        eventId: event.id,
+        eventSubject: event.subject,
+        success: false,
+        error: '適切な代替時間が見つかりませんでした'
+      };
+    }
+  } catch (error) {
+    return {
+      eventId: event.id,
+      eventSubject: event.subject,
+      success: false,
+      error: error instanceof Error ? error.message : '不明なエラー'
+    };
+  }
+}
+
+/**
+ * 単一イベントの辞退処理
+ */
+async function declineEvent(
+  event: ProposalEvent,
+  mgc: MgcService
+): Promise<EventProcessResult> {
+  try {
+    // イベントへの返信を更新（辞退）
+    await mgc.updateEventResponse(event.id, 'decline');
+    
+    return {
+      eventId: event.id,
+      eventSubject: event.subject,
+      success: true,
+      details: '辞退完了'
+    };
+  } catch (error) {
+    return {
+      eventId: event.id,
+      eventSubject: event.subject,
+      success: false,
+      error: error instanceof Error ? error.message : '不明なエラー'
+    };
+  }
+}
+
+/**
+ * 提案された変更を適用（複数イベント対応）
  */
 async function applyProposedChanges(
   proposal: Proposal,
   mgc: MgcService,
   dryRun?: boolean
-): Promise<{ success: boolean; details?: string; error?: string }> {
+): Promise<ApplyResult> {
   if (dryRun) {
-    return { success: true, details: 'ドライランモードのため、実際の変更は行われませんでした' };
+    return { 
+      success: true, 
+      details: 'ドライランモードのため、実際の変更は行われませんでした' 
+    };
   }
   
   try {
     const suggestion = proposal.suggestion;
     
+    // 最高優先度を特定
+    const highestPriorityScore = Math.max(...proposal.events.map(e => e.priority?.score || 0));
+    
     // リスケジュールの場合
     if (suggestion.action.includes('リスケジュール')) {
-      // 最高優先度を特定
-      const highestPriorityScore = Math.max(...proposal.events.map(e => e.priority?.score || 0));
-      
       // 最高優先度未満のすべてのイベントを特定
       const eventsToReschedule = proposal.events.filter(e => 
         (e.priority?.score || 0) < highestPriorityScore
       );
       
-      // 複数のイベントをリスケジュールする場合、まず最初のものから処理
-      // TODO: 複数イベントの同時リスケジュールに対応
-      // 実装案: 1) 全参加者の空き時間を一括取得、2) 複数イベントを順次処理するバッチ処理、
-      // 3) 失敗時のロールバック機能、4) ユーザーへの進捗通知機能を追加
-      const eventToReschedule = eventsToReschedule[0];
-      
-      // イベント詳細を取得してattendees情報を取得
-      const eventDetails = await mgc.getEvent(eventToReschedule.id);
-      const attendees = eventDetails.attendees || [];
-      const attendeeEmails = attendees.map((a: any) => a.emailAddress.address);
-      
-      const meetingTimes = await mgc.findMeetingTimes({
-        attendees: attendeeEmails.map((email: string) => ({
-          emailAddress: { address: email }
-        })),
-        timeConstraint: {
-          timeslots: [{
-            start: { 
-              dateTime: new Date().toISOString(),
-              timeZone: process.env.OUTLOOK_AGENT_TIMEZONE || 'Asia/Tokyo'
-            },
-            end: {
-              dateTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-              timeZone: process.env.OUTLOOK_AGENT_TIMEZONE || 'Asia/Tokyo'
-            }
-          }]
-        },
-        meetingDuration: 'PT30M',
-        maxCandidates: 5
-      });
-      
-      if (meetingTimes.meetingTimeSuggestions && meetingTimes.meetingTimeSuggestions.length > 0) {
-        const newTime = meetingTimes.meetingTimeSuggestions[0];
-        
-        // イベントを更新
-        await mgc.updateEvent(eventToReschedule.id, {
-          start: newTime.meetingTimeSlot.start,
-          end: newTime.meetingTimeSlot.end,
-        });
-        
-        // 参加者に通知（コメントとして記録）
-        // const message = `スケジュールコンフリクトのため、この会議を${new Date(newTime.meetingTimeSlot.start.dateTime).toLocaleString('ja-JP')}に変更しました。`;
-        
-        return {
-          success: true,
-          details: `「${eventToReschedule.subject}」を${new Date(newTime.meetingTimeSlot.start.dateTime).toLocaleString('ja-JP')}にリスケジュールしました`
-        };
-      } else {
+      if (eventsToReschedule.length === 0) {
         return {
           success: false,
-          error: '適切な代替時間が見つかりませんでした'
+          error: 'リスケジュール対象のイベントが見つかりません'
+        };
+      }
+      
+      // 複数イベントを順次処理
+      const results: EventProcessResult[] = [];
+      for (const event of eventsToReschedule) {
+        const result = await rescheduleEvent(event, mgc);
+        results.push(result);
+      }
+      
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.length - successCount;
+      
+      // 結果を集約
+      const summary = {
+        total: results.length,
+        successful: successCount,
+        failed: failCount
+      };
+      
+      if (successCount === results.length) {
+        // すべて成功
+        const eventNames = results.map(r => `「${r.eventSubject}」`).join('、');
+        return {
+          success: true,
+          details: `${eventNames}のリスケジュールが完了しました`,
+          results,
+          summary
+        };
+      } else if (successCount > 0) {
+        // 部分成功
+        const successNames = results.filter(r => r.success).map(r => `「${r.eventSubject}」`).join('、');
+        const failNames = results.filter(r => !r.success).map(r => `「${r.eventSubject}」`).join('、');
+        return {
+          success: false,
+          details: `成功: ${successNames}`,
+          error: `失敗: ${failNames}`,
+          results,
+          summary
+        };
+      } else {
+        // すべて失敗
+        return {
+          success: false,
+          error: `すべてのリスケジュールに失敗しました（${failCount}件）`,
+          results,
+          summary
         };
       }
     }
     
     // 辞退の場合
     if (suggestion.action.includes('辞退')) {
-      // 最高優先度を特定
-      const highestPriorityScore = Math.max(...proposal.events.map(e => e.priority?.score || 0));
-      
       // 最高優先度未満のすべてのイベントを特定
       const eventsToDecline = proposal.events.filter(e => 
         (e.priority?.score || 0) < highestPriorityScore
       );
       
-      // 複数のイベントを辞退する場合、まず最初のものから処理
-      // TODO: 複数イベントの同時辞退に対応
-      // 実装案: 1) バッチ辞退API呼び出し、2) 統一された辞退理由の送信、
-      // 3) 失敗したイベントの個別処理、4) 辞退完了の一括通知機能を追加
-      const eventToDecline = eventsToDecline[0];
+      if (eventsToDecline.length === 0) {
+        return {
+          success: false,
+          error: '辞退対象のイベントが見つかりません'
+        };
+      }
       
-      // イベントへの返信を更新（辞退）
-      await mgc.updateEventResponse(eventToDecline.id, 'decline');
+      // 複数イベントを順次処理
+      const results: EventProcessResult[] = [];
+      for (const event of eventsToDecline) {
+        const result = await declineEvent(event, mgc);
+        results.push(result);
+      }
       
-      // Note: コメント付きの辞退は将来のdeclineEventメソッド実装待ち
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.length - successCount;
       
-      return {
-        success: true,
-        details: `「${eventToDecline.subject}」を辞退しました`
+      // 結果を集約
+      const summary = {
+        total: results.length,
+        successful: successCount,
+        failed: failCount
       };
+      
+      if (successCount === results.length) {
+        // すべて成功
+        const eventNames = results.map(r => `「${r.eventSubject}」`).join('、');
+        return {
+          success: true,
+          details: `${eventNames}の辞退が完了しました`,
+          results,
+          summary
+        };
+      } else if (successCount > 0) {
+        // 部分成功
+        const successNames = results.filter(r => r.success).map(r => `「${r.eventSubject}」`).join('、');
+        const failNames = results.filter(r => !r.success).map(r => `「${r.eventSubject}」`).join('、');
+        return {
+          success: false,
+          details: `成功: ${successNames}`,
+          error: `失敗: ${failNames}`,
+          results,
+          summary
+        };
+      } else {
+        // すべて失敗
+        return {
+          success: false,
+          error: `すべての辞退に失敗しました（${failCount}件）`,
+          results,
+          summary
+        };
+      }
     }
     
     return {
@@ -891,9 +1048,22 @@ async function applyAllProposals(
         if (result.details) {
           console.log(chalk.gray(`    ${result.details}`));
         }
+        
+        // 複数イベント処理の場合は統計情報も表示
+        if (result.summary && result.summary.total > 1) {
+          console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功`));
+        }
         successCount++;
       } else {
         console.log(chalk.red(`  ✗ 失敗: ${result.error}`));
+        if (result.details) {
+          console.log(chalk.yellow(`    部分成功: ${result.details}`));
+        }
+        
+        // 複数イベント処理の詳細エラー情報
+        if (result.summary && result.summary.total > 1) {
+          console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功, ${result.summary.failed}件失敗`));
+        }
         errorCount++;
       }
     } catch (error) {
@@ -975,9 +1145,25 @@ async function selectiveModification(
           const result = await applyProposedChanges(modifiedProposal, mgc, false);
           if (result.success) {
             console.log(chalk.green(`  ✓ 修正を適用: ${modifiedProposal.suggestion.action}`));
+            if (result.details) {
+              console.log(chalk.gray(`    ${result.details}`));
+            }
+            
+            // 複数イベント処理の統計情報
+            if (result.summary && result.summary.total > 1) {
+              console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功`));
+            }
             modifyCount++;
           } else {
             console.log(chalk.red(`  ✗ 失敗: ${result.error}`));
+            if (result.details) {
+              console.log(chalk.yellow(`    部分成功: ${result.details}`));
+            }
+            
+            // 複数イベント処理の詳細エラー情報
+            if (result.summary && result.summary.total > 1) {
+              console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功, ${result.summary.failed}件失敗`));
+            }
             errorCount++;
           }
         } catch (error) {
@@ -1003,9 +1189,25 @@ async function selectiveModification(
         const result = await applyProposedChanges(proposal, mgc, false);
         if (result.success) {
           console.log(chalk.green(`  ✓ 自動適用: ${proposal.suggestion.action}`));
+          if (result.details) {
+            console.log(chalk.gray(`    ${result.details}`));
+          }
+          
+          // 複数イベント処理の統計情報
+          if (result.summary && result.summary.total > 1) {
+            console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功`));
+          }
           successCount++;
         } else {
           console.log(chalk.red(`  ✗ 失敗: ${result.error}`));
+          if (result.details) {
+            console.log(chalk.yellow(`    部分成功: ${result.details}`));
+          }
+          
+          // 複数イベント処理の詳細エラー情報
+          if (result.summary && result.summary.total > 1) {
+            console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功, ${result.summary.failed}件失敗`));
+          }
           errorCount++;
         }
       } catch (error) {
