@@ -995,6 +995,39 @@ function generateAdvancedSuggestion(sortedEvents: any[], action: any): ProposalS
 }
 
 /**
+ * 処理結果を表示し、カウンターを更新する共通関数
+ */
+function handleProcessingResult(
+  result: ApplyResult,
+  actionLabel: string,
+  counters: { success: number; error: number; modify?: number }
+): { success: number; error: number; modify?: number } {
+  if (result.success) {
+    console.log(chalk.green(`  ✓ ${actionLabel}`));
+    if (result.details) {
+      console.log(chalk.gray(`    ${result.details}`));
+    }
+    
+    // 複数イベント処理の統計情報表示
+    if (result.summary && result.summary.total > 1) {
+      console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功`));
+    }
+    return { ...counters, success: counters.success + 1 };
+  } else {
+    console.log(chalk.red(`  ✗ 失敗: ${result.error}`));
+    if (result.details) {
+      console.log(chalk.yellow(`    部分成功: ${result.details}`));
+    }
+    
+    // 複数イベント処理の詳細エラー情報
+    if (result.summary && result.summary.total > 1) {
+      console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功, ${result.summary.failed}件失敗`));
+    }
+    return { ...counters, error: counters.error + 1 };
+  }
+}
+
+/**
  * すべての提案を適用
  */
 async function applyAllProposals(
@@ -1024,29 +1057,9 @@ async function applyAllProposals(
       
       // 実際の変更を適用
       const result = await applyProposedChanges(proposal, mgc, false);
-      if (result.success) {
-        console.log(chalk.green(`  ✓ ${proposal.suggestion.action}`));
-        if (result.details) {
-          console.log(chalk.gray(`    ${result.details}`));
-        }
-        
-        // 複数イベント処理の場合は統計情報も表示
-        if (result.summary && result.summary.total > 1) {
-          console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功`));
-        }
-        successCount++;
-      } else {
-        console.log(chalk.red(`  ✗ 失敗: ${result.error}`));
-        if (result.details) {
-          console.log(chalk.yellow(`    部分成功: ${result.details}`));
-        }
-        
-        // 複数イベント処理の詳細エラー情報
-        if (result.summary && result.summary.total > 1) {
-          console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功, ${result.summary.failed}件失敗`));
-        }
-        errorCount++;
-      }
+      const counters = handleProcessingResult(result, proposal.suggestion.action, { success: successCount, error: errorCount });
+      successCount = counters.success;
+      errorCount = counters.error;
     } catch (error) {
       console.log(chalk.red(`  ✗ エラー: ${error}`));
       errorCount++;
@@ -1124,29 +1137,10 @@ async function selectiveModification(
         
         try {
           const result = await applyProposedChanges(modifiedProposal, mgc, false);
-          if (result.success) {
-            console.log(chalk.green(`  ✓ 修正を適用: ${modifiedProposal.suggestion.action}`));
-            if (result.details) {
-              console.log(chalk.gray(`    ${result.details}`));
-            }
-            
-            // 複数イベント処理の統計情報
-            if (result.summary && result.summary.total > 1) {
-              console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功`));
-            }
-            modifyCount++;
-          } else {
-            console.log(chalk.red(`  ✗ 失敗: ${result.error}`));
-            if (result.details) {
-              console.log(chalk.yellow(`    部分成功: ${result.details}`));
-            }
-            
-            // 複数イベント処理の詳細エラー情報
-            if (result.summary && result.summary.total > 1) {
-              console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功, ${result.summary.failed}件失敗`));
-            }
-            errorCount++;
-          }
+          const counters = handleProcessingResult(result, `修正を適用: ${modifiedProposal.suggestion.action}`, 
+            { success: modifyCount, error: errorCount });
+          modifyCount = counters.success;
+          errorCount = counters.error;
         } catch (error) {
           console.log(chalk.red(`  ✗ エラー: ${error}`));
           errorCount++;
@@ -1168,29 +1162,10 @@ async function selectiveModification(
         
         // 実際の変更を適用
         const result = await applyProposedChanges(proposal, mgc, false);
-        if (result.success) {
-          console.log(chalk.green(`  ✓ 自動適用: ${proposal.suggestion.action}`));
-          if (result.details) {
-            console.log(chalk.gray(`    ${result.details}`));
-          }
-          
-          // 複数イベント処理の統計情報
-          if (result.summary && result.summary.total > 1) {
-            console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功`));
-          }
-          successCount++;
-        } else {
-          console.log(chalk.red(`  ✗ 失敗: ${result.error}`));
-          if (result.details) {
-            console.log(chalk.yellow(`    部分成功: ${result.details}`));
-          }
-          
-          // 複数イベント処理の詳細エラー情報
-          if (result.summary && result.summary.total > 1) {
-            console.log(chalk.gray(`    処理統計: ${result.summary.successful}/${result.summary.total}件成功, ${result.summary.failed}件失敗`));
-          }
-          errorCount++;
-        }
+        const counters = handleProcessingResult(result, `自動適用: ${proposal.suggestion.action}`, 
+          { success: successCount, error: errorCount });
+        successCount = counters.success;
+        errorCount = counters.error;
       } catch (error) {
         console.log(chalk.red(`  ✗ エラー: ${error}`));
         errorCount++;
