@@ -149,11 +149,7 @@ function createBasicProposal(
       responseStatus: e.responseStatus?.response || 'none',
       priority: e.priority
     })),
-    suggestion: {
-      action: action.action,
-      description: action.description,
-      aiAnalysis: null
-    }
+    suggestion: generateAdvancedSuggestion(sortedEvents, action)
   };
 }
 
@@ -171,8 +167,12 @@ function applyAIAnalysisToProposal(
   
   const aiResult = aiResponse.result;
   
+  // AI分析対象のイベントを特定
+  const targetEvents = getTargetEventsForAI(proposal, aiResult.recommendation);
+  const targetText = targetEvents.length > 0 ? createEventNamesList(targetEvents) : aiResult.recommendation.target;
+  
   proposal.suggestion = {
-    action: getActionText(aiResult.recommendation.action, aiResult.recommendation.target),
+    action: getActionText(aiResult.recommendation.action, targetText),
     reason: aiResult.recommendation.reason,
     description: `AI分析による推奨（信頼度: ${aiResult.recommendation.confidence}）`,
     confidence: aiResult.recommendation.confidence,
@@ -929,14 +929,14 @@ async function modifyProposal(proposal: Proposal): Promise<Proposal | null> {
 function getActionText(action: string, target: string): string {
   switch (action) {
     case 'reschedule':
-      // targetに複数のイベントが含まれている場合を考慮
-      if (target.includes('、')) {
+      // targetに既に引用符が含まれているか、複数のイベントが含まれている場合はそのまま使用
+      if (target.includes('「') || target.includes('、')) {
         return `${target}を別の時間にリスケジュール`;
       } else {
         return `「${target}」を別の時間にリスケジュール`;
       }
     case 'decline':
-      if (target.includes('、')) {
+      if (target.includes('「') || target.includes('、')) {
         return `${target}を辞退`;
       } else {
         return `「${target}」を辞退`;
@@ -946,6 +946,47 @@ function getActionText(action: string, target: string): string {
     default:
       return action;
   }
+}
+
+/**
+ * AI分析の対象となるイベントを特定
+ */
+function getTargetEventsForAI(proposal: Proposal, recommendation: any): any[] {
+  // AI推奨アクションがrescheduleまたはdeclineの場合、低優先度のイベントを対象とする
+  if (recommendation.action === 'reschedule' || recommendation.action === 'decline') {
+    // 優先度でソートして、最高優先度以外を対象とする
+    const sortedEvents = [...proposal.events].sort((a, b) => (b.priority?.score || 0) - (a.priority?.score || 0));
+    return sortedEvents.slice(1); // 最高優先度以外のすべて
+  }
+  
+  // その他のアクションの場合は空配列を返す（従来のAI targetを使用）
+  return [];
+}
+
+/**
+ * 複数のイベント名を適切に表示するためのヘルパー関数
+ * 同名のイベントがある場合は件数を表示する
+ */
+function createEventNamesList(events: any[]): string {
+  const eventCounts = new Map<string, number>();
+  
+  // イベント名の出現回数をカウント
+  for (const event of events) {
+    const subject = event.subject;
+    eventCounts.set(subject, (eventCounts.get(subject) || 0) + 1);
+  }
+  
+  // 重複を排除して表示用の文字列を作成
+  const displayNames: string[] = [];
+  for (const [subject, count] of eventCounts) {
+    if (count === 1) {
+      displayNames.push(`「${subject}」`);
+    } else {
+      displayNames.push(`「${subject}」(${count}件)`);
+    }
+  }
+  
+  return displayNames.join('、');
 }
 
 // 高度な提案生成（ルールベース）
@@ -964,7 +1005,7 @@ function generateAdvancedSuggestion(sortedEvents: any[], action: any): ProposalS
       reason = `「${highPriorityEvent.subject}」の方が優先度が高いため（${highPriorityEvent.priority.level}: ${highPriorityEvent.priority.score} vs ${lowPriorityEvent.priority.level}: ${lowPriorityEvent.priority.score}）`;
     } else {
       // 3つ以上の予定の場合は複数をリスケジュール
-      const eventNames = lowPriorityEvents.map(e => `「${e.subject}」`).join('、');
+      const eventNames = createEventNamesList(lowPriorityEvents);
       suggestionAction = `${eventNames}を別の時間にリスケジュール`;
       reason = `「${highPriorityEvent.subject}」の方が優先度が高いため（${highPriorityEvent.priority.level}: ${highPriorityEvent.priority.score}）`;
     }
@@ -974,7 +1015,7 @@ function generateAdvancedSuggestion(sortedEvents: any[], action: any): ProposalS
       suggestionAction = `「${lowPriorityEvent.subject}」のリスケジュールを検討`;
       reason = `優先度の差があるため（${highPriorityEvent.priority.score - lowPriorityEvent.priority.score}ポイント差）`;
     } else {
-      const eventNames = lowPriorityEvents.map(e => `「${e.subject}」`).join('、');
+      const eventNames = createEventNamesList(lowPriorityEvents);
       suggestionAction = `${eventNames}のリスケジュールを検討`;
       reason = `「${highPriorityEvent.subject}」の方が優先度が高いため`;
     }

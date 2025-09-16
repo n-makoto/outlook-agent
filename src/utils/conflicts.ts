@@ -1,6 +1,72 @@
 import { CalendarEvent } from '../types/calendar.js';
 import { EventConflict } from '../types/conflict.js';
 
+/**
+ * 2つのイベントが時間的に重複しているかチェック
+ */
+function eventsOverlap(event1: CalendarEvent, event2: CalendarEvent): boolean {
+  const start1 = new Date(event1.start.dateTime);
+  const end1 = new Date(event1.end.dateTime);
+  const start2 = new Date(event2.start.dateTime);
+  const end2 = new Date(event2.end.dateTime);
+  
+  return (
+    (start2 >= start1 && start2 < end1) ||
+    (end2 > start1 && end2 <= end1) ||
+    (start2 <= start1 && end2 >= end1)
+  );
+}
+
+/**
+ * Union-Findを使用して連結成分を見つける
+ */
+class UnionFind {
+  private parent: number[];
+  private rank: number[];
+  
+  constructor(size: number) {
+    this.parent = Array.from({ length: size }, (_, i) => i);
+    this.rank = new Array(size).fill(0);
+  }
+  
+  find(x: number): number {
+    if (this.parent[x] !== x) {
+      this.parent[x] = this.find(this.parent[x]);
+    }
+    return this.parent[x];
+  }
+  
+  union(x: number, y: number): void {
+    const rootX = this.find(x);
+    const rootY = this.find(y);
+    
+    if (rootX !== rootY) {
+      if (this.rank[rootX] < this.rank[rootY]) {
+        this.parent[rootX] = rootY;
+      } else if (this.rank[rootX] > this.rank[rootY]) {
+        this.parent[rootY] = rootX;
+      } else {
+        this.parent[rootY] = rootX;
+        this.rank[rootX]++;
+      }
+    }
+  }
+  
+  getGroups(): number[][] {
+    const groups: Map<number, number[]> = new Map();
+    
+    for (let i = 0; i < this.parent.length; i++) {
+      const root = this.find(i);
+      if (!groups.has(root)) {
+        groups.set(root, []);
+      }
+      groups.get(root)!.push(i);
+    }
+    
+    return Array.from(groups.values()).filter(group => group.length > 1);
+  }
+}
+
 export function detectConflicts(events: CalendarEvent[]): EventConflict[] {
   const conflicts: EventConflict[] = [];
   
@@ -18,46 +84,38 @@ export function detectConflicts(events: CalendarEvent[]): EventConflict[] {
     new Date(a.start.dateTime).getTime() - new Date(b.start.dateTime).getTime()
   );
 
-  // 重複をチェック
+  if (sortedEvents.length < 2) {
+    return conflicts;
+  }
+
+  // Union-Findを初期化
+  const uf = new UnionFind(sortedEvents.length);
+  
+  // すべてのイベントペアをチェックして重複を検出
   for (let i = 0; i < sortedEvents.length; i++) {
-    const conflictGroup: CalendarEvent[] = [sortedEvents[i]];
-    const eventStart = new Date(sortedEvents[i].start.dateTime);
-    const eventEnd = new Date(sortedEvents[i].end.dateTime);
-    
-    // このイベントと重複する他のイベントを探す
     for (let j = i + 1; j < sortedEvents.length; j++) {
-      const compareStart = new Date(sortedEvents[j].start.dateTime);
-      const compareEnd = new Date(sortedEvents[j].end.dateTime);
-      
-      // 時間の重複をチェック
-      if (
-        (compareStart >= eventStart && compareStart < eventEnd) ||
-        (compareEnd > eventStart && compareEnd <= eventEnd) ||
-        (compareStart <= eventStart && compareEnd >= eventEnd)
-      ) {
-        conflictGroup.push(sortedEvents[j]);
+      if (eventsOverlap(sortedEvents[i], sortedEvents[j])) {
+        uf.union(i, j);
       }
     }
+  }
+  
+  // 連結成分（コンフリクトグループ）を取得
+  const conflictGroups = uf.getGroups();
+  
+  // 各コンフリクトグループをEventConflictに変換
+  for (const group of conflictGroups) {
+    const conflictEvents = group.map(index => sortedEvents[index]);
     
-    // 2つ以上のイベントが重複している場合のみ記録
-    if (conflictGroup.length > 1) {
-      // 既に記録されているコンフリクトグループに含まれていないかチェック
-      const isAlreadyRecorded = conflicts.some(conflict =>
-        conflict.events.some(e => conflictGroup.some(ce => ce.id === e.id))
-      );
-      
-      if (!isAlreadyRecorded) {
-        // コンフリクトグループの時間範囲を計算
-        const startTimes = conflictGroup.map(e => new Date(e.start.dateTime));
-        const endTimes = conflictGroup.map(e => new Date(e.end.dateTime));
-        
-        conflicts.push({
-          events: conflictGroup,
-          startTime: new Date(Math.min(...startTimes.map(d => d.getTime()))),
-          endTime: new Date(Math.max(...endTimes.map(d => d.getTime())))
-        });
-      }
-    }
+    // コンフリクトグループの時間範囲を計算
+    const startTimes = conflictEvents.map(e => new Date(e.start.dateTime));
+    const endTimes = conflictEvents.map(e => new Date(e.end.dateTime));
+    
+    conflicts.push({
+      events: conflictEvents,
+      startTime: new Date(Math.min(...startTimes.map(d => d.getTime()))),
+      endTime: new Date(Math.max(...endTimes.map(d => d.getTime())))
+    });
   }
   
   return conflicts;
