@@ -1,6 +1,6 @@
 {
   "name": "outlook-agent",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "CLI tool for managing Outlook calendar with mgc (Microsoft Graph CLI)",
   "bin": {
     "outlook-agent": "./dist/index.js"
@@ -37,11 +37,9 @@
   "homepage": "https://github.com/chaspy/outlook-agent#readme",
   "dependencies": {
     "@ai-sdk/openai": "^0.0.30",
-    "@mastra/core": "^0.1.0",
     "ai": "^3.0.0",
     "chalk": "^5.3.0",
     "commander": "^11.1.0",
-    "crypto": "^1.0.1",
     "date-fns": "^3.0.6",
     "inquirer": "^9.2.12",
     "inquirer-autocomplete-prompt": "^3.0.1",
