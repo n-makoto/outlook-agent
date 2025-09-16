@@ -713,7 +713,94 @@ async function declineEvent(
 }
 
 /**
- * 提案された変更を適用（複数イベント対応）
+ * 対象イベントを特定する共通関数
+ */
+function getTargetEvents(proposal: Proposal): ProposalEvent[] {
+  const highestPriorityScore = Math.max(...proposal.events.map(e => e.priority?.score || 0));
+  return proposal.events.filter(e => 
+    (e.priority?.score || 0) < highestPriorityScore
+  );
+}
+
+/**
+ * 複数イベントを順次処理する共通関数
+ */
+async function processMultipleEvents(
+  events: ProposalEvent[],
+  processFunction: (event: ProposalEvent, mgc: MgcService) => Promise<EventProcessResult>,
+  mgc: MgcService
+): Promise<EventProcessResult[]> {
+  const results: EventProcessResult[] = [];
+  for (const event of events) {
+    const result = await processFunction(event, mgc);
+    results.push(result);
+  }
+  return results;
+}
+
+/**
+ * 処理結果を集約する共通関数
+ */
+function aggregateResults(results: EventProcessResult[]) {
+  const successCount = results.filter(r => r.success).length;
+  const failCount = results.length - successCount;
+  
+  return {
+    results,
+    summary: {
+      total: results.length,
+      successful: successCount,
+      failed: failCount
+    },
+    successCount,
+    failCount
+  };
+}
+
+/**
+ * 処理結果からレスポンスを生成する共通関数
+ */
+function generateProcessingResponse(
+  aggregatedResults: ReturnType<typeof aggregateResults>,
+  actionType: 'reschedule' | 'decline'
+): ApplyResult {
+  const { results, summary, successCount, failCount } = aggregatedResults;
+  
+  const actionText = actionType === 'reschedule' ? 'リスケジュール' : '辞退';
+  
+  if (successCount === results.length) {
+    // すべて成功
+    const eventNames = results.map(r => `「${r.eventSubject}」`).join('、');
+    return {
+      success: true,
+      details: `${eventNames}の${actionText}が完了しました`,
+      results,
+      summary
+    };
+  } else if (successCount > 0) {
+    // 部分成功
+    const successNames = results.filter(r => r.success).map(r => `「${r.eventSubject}」`).join('、');
+    const failNames = results.filter(r => !r.success).map(r => `「${r.eventSubject}」`).join('、');
+    return {
+      success: false,
+      details: `成功: ${successNames}`,
+      error: `失敗: ${failNames}`,
+      results,
+      summary
+    };
+  } else {
+    // すべて失敗
+    return {
+      success: false,
+      error: `すべての${actionText}に失敗しました（${failCount}件）`,
+      results,
+      summary
+    };
+  }
+}
+
+/**
+ * 提案された変更を適用（複数イベント対応、リファクタリング版）
  */
 async function applyProposedChanges(
   proposal: Proposal,
@@ -729,132 +816,26 @@ async function applyProposedChanges(
   
   try {
     const suggestion = proposal.suggestion;
+    const targetEvents = getTargetEvents(proposal);
     
-    // 最高優先度を特定
-    const highestPriorityScore = Math.max(...proposal.events.map(e => e.priority?.score || 0));
-    
-    // リスケジュールの場合
-    if (suggestion.action.includes('リスケジュール')) {
-      // 最高優先度未満のすべてのイベントを特定
-      const eventsToReschedule = proposal.events.filter(e => 
-        (e.priority?.score || 0) < highestPriorityScore
-      );
-      
-      if (eventsToReschedule.length === 0) {
-        return {
-          success: false,
-          error: 'リスケジュール対象のイベントが見つかりません'
-        };
-      }
-      
-      // 複数イベントを順次処理
-      const results: EventProcessResult[] = [];
-      for (const event of eventsToReschedule) {
-        const result = await rescheduleEvent(event, mgc);
-        results.push(result);
-      }
-      
-      const successCount = results.filter(r => r.success).length;
-      const failCount = results.length - successCount;
-      
-      // 結果を集約
-      const summary = {
-        total: results.length,
-        successful: successCount,
-        failed: failCount
+    if (targetEvents.length === 0) {
+      const actionText = suggestion.action.includes('リスケジュール') ? 'リスケジュール' : '辞退';
+      return {
+        success: false,
+        error: `${actionText}対象のイベントが見つかりません`
       };
-      
-      if (successCount === results.length) {
-        // すべて成功
-        const eventNames = results.map(r => `「${r.eventSubject}」`).join('、');
-        return {
-          success: true,
-          details: `${eventNames}のリスケジュールが完了しました`,
-          results,
-          summary
-        };
-      } else if (successCount > 0) {
-        // 部分成功
-        const successNames = results.filter(r => r.success).map(r => `「${r.eventSubject}」`).join('、');
-        const failNames = results.filter(r => !r.success).map(r => `「${r.eventSubject}」`).join('、');
-        return {
-          success: false,
-          details: `成功: ${successNames}`,
-          error: `失敗: ${failNames}`,
-          results,
-          summary
-        };
-      } else {
-        // すべて失敗
-        return {
-          success: false,
-          error: `すべてのリスケジュールに失敗しました（${failCount}件）`,
-          results,
-          summary
-        };
-      }
     }
     
-    // 辞退の場合
+    if (suggestion.action.includes('リスケジュール')) {
+      const results = await processMultipleEvents(targetEvents, rescheduleEvent, mgc);
+      const aggregated = aggregateResults(results);
+      return generateProcessingResponse(aggregated, 'reschedule');
+    }
+    
     if (suggestion.action.includes('辞退')) {
-      // 最高優先度未満のすべてのイベントを特定
-      const eventsToDecline = proposal.events.filter(e => 
-        (e.priority?.score || 0) < highestPriorityScore
-      );
-      
-      if (eventsToDecline.length === 0) {
-        return {
-          success: false,
-          error: '辞退対象のイベントが見つかりません'
-        };
-      }
-      
-      // 複数イベントを順次処理
-      const results: EventProcessResult[] = [];
-      for (const event of eventsToDecline) {
-        const result = await declineEvent(event, mgc);
-        results.push(result);
-      }
-      
-      const successCount = results.filter(r => r.success).length;
-      const failCount = results.length - successCount;
-      
-      // 結果を集約
-      const summary = {
-        total: results.length,
-        successful: successCount,
-        failed: failCount
-      };
-      
-      if (successCount === results.length) {
-        // すべて成功
-        const eventNames = results.map(r => `「${r.eventSubject}」`).join('、');
-        return {
-          success: true,
-          details: `${eventNames}の辞退が完了しました`,
-          results,
-          summary
-        };
-      } else if (successCount > 0) {
-        // 部分成功
-        const successNames = results.filter(r => r.success).map(r => `「${r.eventSubject}」`).join('、');
-        const failNames = results.filter(r => !r.success).map(r => `「${r.eventSubject}」`).join('、');
-        return {
-          success: false,
-          details: `成功: ${successNames}`,
-          error: `失敗: ${failNames}`,
-          results,
-          summary
-        };
-      } else {
-        // すべて失敗
-        return {
-          success: false,
-          error: `すべての辞退に失敗しました（${failCount}件）`,
-          results,
-          summary
-        };
-      }
+      const results = await processMultipleEvents(targetEvents, declineEvent, mgc);
+      const aggregated = aggregateResults(results);
+      return generateProcessingResponse(aggregated, 'decline');
     }
     
     return {
