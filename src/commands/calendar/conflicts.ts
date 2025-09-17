@@ -278,15 +278,23 @@ async function handleDeclineAction(
   mgc: MgcService
 ): Promise<void> {
   if (isOrganizer) {
-    console.log(chalk.cyan(`Cancelling: ${event?.subject}...`));
-    try {
-      await mgc.cancelEvent(resolution.eventId, resolution.declineMessage);
-      console.log(chalk.green('✓ Event cancelled'));
-    } catch (error: any) {
-      console.log(chalk.red('Failed to cancel event:'), error.message);
-    }
+    await handleOrganizerCancellation(resolution, event, mgc);
   } else {
     await handleParticipantDecline(resolution, event, mgc);
+  }
+}
+
+async function handleOrganizerCancellation(
+  resolution: ConflictResolution,
+  event: CalendarEvent | undefined,
+  mgc: MgcService
+): Promise<void> {
+  console.log(chalk.cyan(`Cancelling: ${event?.subject}...`));
+  try {
+    await mgc.cancelEvent(resolution.eventId, resolution.declineMessage);
+    console.log(chalk.green('✓ Event cancelled'));
+  } catch (error: any) {
+    console.log(chalk.red('Failed to cancel event:'), error.message);
   }
 }
 

@@ -301,7 +301,9 @@ export class DecisionMemory {
       return null;
     }
     
-    return entries.sort(([, a], [, b]) => b - a)[0][0];
+    const sortedEntries = [...entries];
+    sortedEntries.sort(([, a], [, b]) => b - a);
+    return sortedEntries[0][0];
   }
   
   private analyzeTimeOfDayPatterns(decisions: Decision[]): Pattern[] {

@@ -137,38 +137,62 @@ function checkMyCalendarAvailability(
   myEvents: CalendarEvent[]
 ): boolean {
   for (const event of myEvents) {
-    if (event.subject?.startsWith('Declined:')) {
+    if (shouldSkipEvent(event)) {
       continue;
     }
     
-    const startDateTime = event.start.timeZone === 'Asia/Tokyo' 
-      ? event.start.dateTime + '+09:00'
-      : event.start.dateTime + 'Z';
-    const endDateTime = event.end.timeZone === 'Asia/Tokyo'
-      ? event.end.dateTime + '+09:00'
-      : event.end.dateTime + 'Z';
-      
-    const eventStart = new Date(startDateTime);
-    const eventEnd = new Date(endDateTime);
+    const { eventStart, eventEnd } = parseEventDateTimes(event);
     
-    if (!isSameDayJST(eventStart, currentTime) && !isSameDayJST(eventEnd, currentTime)) {
+    if (!isEventOnSameDay(eventStart, eventEnd, currentTime)) {
       continue;
     }
     
-    if (event.isAllDay && isSameDayJST(eventStart, currentTime)) {
-      if (event.showAs !== 'free') {
-        return false;
-      }
-    }
-    
-    if (hasTimeConflict(currentTime, slotEnd, eventStart, eventEnd)) {
-      if (event.showAs !== 'free') {
-        return false;
-      }
+    if (isEventConflicting(event, currentTime, slotEnd, eventStart, eventEnd)) {
+      return false;
     }
   }
   
   return true;
+}
+
+function shouldSkipEvent(event: CalendarEvent): boolean {
+  return event.subject?.startsWith('Declined:') || false;
+}
+
+function parseEventDateTimes(event: CalendarEvent): { eventStart: Date; eventEnd: Date } {
+  const startDateTime = event.start.timeZone === 'Asia/Tokyo' 
+    ? event.start.dateTime + '+09:00'
+    : event.start.dateTime + 'Z';
+  const endDateTime = event.end.timeZone === 'Asia/Tokyo'
+    ? event.end.dateTime + '+09:00'
+    : event.end.dateTime + 'Z';
+    
+  return {
+    eventStart: new Date(startDateTime),
+    eventEnd: new Date(endDateTime)
+  };
+}
+
+function isEventOnSameDay(eventStart: Date, eventEnd: Date, currentTime: Date): boolean {
+  return isSameDayJST(eventStart, currentTime) || isSameDayJST(eventEnd, currentTime);
+}
+
+function isEventConflicting(
+  event: CalendarEvent,
+  currentTime: Date,
+  slotEnd: Date,
+  eventStart: Date,
+  eventEnd: Date
+): boolean {
+  if (event.isAllDay && isSameDayJST(eventStart, currentTime)) {
+    return event.showAs !== 'free';
+  }
+  
+  if (hasTimeConflict(currentTime, slotEnd, eventStart, eventEnd)) {
+    return event.showAs !== 'free';
+  }
+  
+  return false;
 }
 
 function hasTimeConflict(
@@ -189,8 +213,7 @@ function checkAttendeeAvailability(
 ): boolean {
   const schedules = freeBusyResult.value || [];
   
-  for (let scheduleIndex = 0; scheduleIndex < schedules.length; scheduleIndex++) {
-    const schedule = schedules[scheduleIndex];
+  for (const schedule of schedules) {
     
     if (schedule.availabilityView) {
       const slotStartTime = currentTime.getTime();

@@ -288,37 +288,63 @@ function isMyCalendarAvailable(
   myEvents: CalendarEvent[]
 ): boolean {
   for (const event of myEvents) {
-    if (event.id === selectedEvent.id) {continue;}
-    
-    const startDateTime = event.start.timeZone === 'Asia/Tokyo' 
-      ? event.start.dateTime + '+09:00'
-      : event.start.dateTime + 'Z';
-    const endDateTime = event.end.timeZone === 'Asia/Tokyo'
-      ? event.end.dateTime + '+09:00'
-      : event.end.dateTime + 'Z';
-      
-    const eventStart = new Date(startDateTime);
-    const eventEnd = new Date(endDateTime);
-    
-    if (eventStart.toDateString() !== currentTime.toDateString() &&
-        eventEnd.toDateString() !== currentTime.toDateString()) {
+    if (shouldSkipRescheduleEvent(event, selectedEvent)) {
       continue;
     }
     
-    if (event.isAllDay && eventStart.toDateString() === currentTime.toDateString()) {
-      if (event.showAs !== 'free') {
-        return false;
-      }
+    const { eventStart, eventEnd } = parseRescheduleEventDateTimes(event);
+    
+    if (!isRescheduleEventOnSameDay(eventStart, eventEnd, currentTime)) {
+      continue;
     }
     
-    if (hasTimeConflict(currentTime, slotEnd, eventStart, eventEnd)) {
-      if (event.showAs !== 'free') {
-        return false;
-      }
+    if (isRescheduleEventConflicting(event, currentTime, slotEnd, eventStart, eventEnd)) {
+      return false;
     }
   }
   
   return true;
+}
+
+function shouldSkipRescheduleEvent(event: CalendarEvent, selectedEvent: CalendarEvent): boolean {
+  return event.id === selectedEvent.id;
+}
+
+function parseRescheduleEventDateTimes(event: CalendarEvent): { eventStart: Date; eventEnd: Date } {
+  const startDateTime = event.start.timeZone === 'Asia/Tokyo' 
+    ? event.start.dateTime + '+09:00'
+    : event.start.dateTime + 'Z';
+  const endDateTime = event.end.timeZone === 'Asia/Tokyo'
+    ? event.end.dateTime + '+09:00'
+    : event.end.dateTime + 'Z';
+    
+  return {
+    eventStart: new Date(startDateTime),
+    eventEnd: new Date(endDateTime)
+  };
+}
+
+function isRescheduleEventOnSameDay(eventStart: Date, eventEnd: Date, currentTime: Date): boolean {
+  return eventStart.toDateString() === currentTime.toDateString() ||
+         eventEnd.toDateString() === currentTime.toDateString();
+}
+
+function isRescheduleEventConflicting(
+  event: CalendarEvent,
+  currentTime: Date,
+  slotEnd: Date,
+  eventStart: Date,
+  eventEnd: Date
+): boolean {
+  if (event.isAllDay && eventStart.toDateString() === currentTime.toDateString()) {
+    return event.showAs !== 'free';
+  }
+  
+  if (hasTimeConflict(currentTime, slotEnd, eventStart, eventEnd)) {
+    return event.showAs !== 'free';
+  }
+  
+  return false;
 }
 
 function hasTimeConflict(
