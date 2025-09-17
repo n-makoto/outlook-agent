@@ -818,78 +818,24 @@ async function applyProposedChanges(
     const suggestion = proposal.suggestion;
     const targetEvents = getTargetEvents(proposal);
     
-    // リスケジュールの場合
+    if (targetEvents.length === 0) {
+      const actionText = suggestion.action.includes('リスケジュール') ? 'リスケジュール' : '辞退';
+      return {
+        success: false,
+        error: `${actionText}対象のイベントが見つかりません`
+      };
+    }
+    
     if (suggestion.action.includes('リスケジュール')) {
-      // 低優先度のイベントを特定
-      const eventToReschedule = proposal.events.reduce((prev: ProposalEvent, curr: ProposalEvent) => 
-        (prev.priority?.score || 0) < (curr.priority?.score || 0) ? prev : curr,
-      proposal.events[0]
-      );
-      
-      // イベント詳細を取得してattendees情報を取得
-      const eventDetails = await mgc.getEvent(eventToReschedule.id);
-      const attendees = eventDetails.attendees || [];
-      const attendeeEmails = attendees.map((a: any) => a.emailAddress.address);
-      
-      const meetingTimes = await mgc.findMeetingTimes({
-        attendees: attendeeEmails.map((email: string) => ({
-          emailAddress: { address: email }
-        })),
-        timeConstraint: {
-          timeslots: [{
-            start: { 
-              dateTime: new Date().toISOString(),
-              timeZone: process.env.OUTLOOK_AGENT_TIMEZONE || 'Asia/Tokyo'
-            },
-            end: {
-              dateTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-              timeZone: process.env.OUTLOOK_AGENT_TIMEZONE || 'Asia/Tokyo'
-            }
-          }]
-        },
-        meetingDuration: 'PT30M',
-        maxCandidates: 5
-      });
-      
-      if (meetingTimes.meetingTimeSuggestions && meetingTimes.meetingTimeSuggestions.length > 0) {
-        const newTime = meetingTimes.meetingTimeSuggestions[0];
-        
-        // イベントを更新
-        await mgc.updateEvent(eventToReschedule.id, {
-          start: newTime.meetingTimeSlot.start,
-          end: newTime.meetingTimeSlot.end,
-        });
-        
-        // 参加者に通知（コメントとして記録）
-        // const message = `スケジュールコンフリクトのため、この会議を${new Date(newTime.meetingTimeSlot.start.dateTime).toLocaleString('ja-JP')}に変更しました。`;
-        
-        return {
-          success: true,
-          details: `「${eventToReschedule.subject}」を${new Date(newTime.meetingTimeSlot.start.dateTime).toLocaleString('ja-JP')}にリスケジュールしました`
-        };
-      } else {
-        return {
-          success: false,
-          error: '適切な代替時間が見つかりませんでした'
-        };
-      }
+      const results = await processMultipleEvents(targetEvents, rescheduleEvent, mgc);
+      const aggregated = aggregateResults(results);
+      return generateProcessingResponse(aggregated, 'reschedule');
     }
     
     if (suggestion.action.includes('辞退')) {
-      const eventToDecline = proposal.events.reduce((prev: ProposalEvent, curr: ProposalEvent) => 
-        (prev.priority?.score || 0) < (curr.priority?.score || 0) ? prev : curr,
-      proposal.events[0]
-      );
-      
-      // イベントへの返信を更新（辞退）
-      await mgc.updateEventResponse(eventToDecline.id, 'decline');
-      
-      // Note: コメント付きの辞退は将来のdeclineEventメソッド実装待ち
-      
-      return {
-        success: true,
-        details: `「${eventToDecline.subject}」を辞退しました`
-      };
+      const results = await processMultipleEvents(targetEvents, declineEvent, mgc);
+      const aggregated = aggregateResults(results);
+      return generateProcessingResponse(aggregated, 'decline');
     }
     
     return {
@@ -1055,14 +1001,12 @@ function generateAdvancedSuggestion(sortedEvents: any[], action: any): ProposalS
       reason = `「${highPriorityEvent.subject}」の方が優先度が高いため（${highPriorityEvent.priority.level}: ${highPriorityEvent.priority.score}）`;
     }
   } else if (action.action === 'suggest_reschedule') {
+    const lowPriorityEvent = lowPriorityEvents[0];
     suggestionAction = `「${lowPriorityEvent.subject}」のリスケジュールを検討`;
     reason = `優先度の差があるため（${highPriorityEvent.priority.score - lowPriorityEvent.priority.score}ポイント差）`;
   } else {
     suggestionAction = '手動での判断が必要';
-    reason = `優先度が近いため、ビジネス判断が必要（${highPriorityEvent.priority.score} vs ${lowPriorityEvent.priority.score}）`;
-  } else {
-    suggestionAction = `手動での判断が必要`;
-    reason = `複数の予定が同じ優先度のため、ビジネス判断が必要`;
+    reason = `優先度が近いため、ビジネス判断が必要（${highPriorityEvent.priority.score} vs ${lowPriorityEvents[0]?.priority.score}）`;
   }
   
   return {
