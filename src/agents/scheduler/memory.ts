@@ -91,8 +91,7 @@ export class DecisionMemory {
     const now = new Date();
     const hour = now.getHours();
     let timeOfDay = 'morning';
-    if (hour >= 12 && hour < 17) timeOfDay = 'afternoon';
-    else if (hour >= 17) timeOfDay = 'evening';
+    if (hour >= 12 && hour < 17) {timeOfDay = 'afternoon';} else if (hour >= 17) {timeOfDay = 'evening';}
     
     // PIIを避けるためにハッシュ化
     const conflictData = JSON.stringify({
@@ -161,60 +160,82 @@ export class DecisionMemory {
     return patterns.filter(p => p.approvalRate > 0.7 && p.sampleCount >= 5);
   }
   
-  /**
-   * 最近の判断を読み込み
-   */
-  private async loadRecentDecisions(days: number): Promise<Decision[]> {
-    const decisions: Decision[] = [];
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - days);
+  private isValidDecisionFile(filename: string): boolean {
+    return filename.endsWith('.jsonl');
+  }
+  
+  private isFileWithinDateRange(filename: string, cutoffDate: Date): boolean {
+    const dateStr = filename.replace('.jsonl', '');
+    const fileDate = new Date(dateStr);
+    return fileDate >= cutoffDate;
+  }
+  
+  private parseDecisionLine(line: string): Decision | null {
+    if (!line.trim()) {
+      return null;
+    }
     
     try {
-      const files = await fs.readdir(this.baseDir);
-      
-      for (const file of files) {
-        if (!file.endsWith('.jsonl')) continue;
-        
-        const dateStr = file.replace('.jsonl', '');
-        const fileDate = new Date(dateStr);
-        
-        if (fileDate >= cutoffDate) {
-          const filePath = path.join(this.baseDir, file);
-          const content = await fs.readFile(filePath, 'utf-8');
-          const lines = content.trim().split('\n');
-          
-          for (const line of lines) {
-            if (line) {
-              try {
-                decisions.push(JSON.parse(line));
-              } catch (e) {
-                // 不正な行はスキップし、デバッグ情報を記録
-                if (process.env.DEBUG) {
-                  console.warn(`Skipping invalid JSON line: ${line.substring(0, 50)}...`);
-                }
-              }
-            }
-          }
-        }
+      return JSON.parse(line);
+    } catch (e) {
+      if (process.env.DEBUG) {
+        console.warn(`Skipping invalid JSON line: ${line.substring(0, 50)}...`);
       }
-    } catch (error) {
-      // ディレクトリが存在しない場合は空配列を返す
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-        return [];
+      return null;
+    }
+  }
+  
+  private async readDecisionsFromFile(filePath: string): Promise<Decision[]> {
+    const content = await fs.readFile(filePath, 'utf-8');
+    const lines = content.trim().split('\n');
+    const decisions: Decision[] = [];
+    
+    for (const line of lines) {
+      const decision = this.parseDecisionLine(line);
+      if (decision) {
+        decisions.push(decision);
       }
-      throw error;
     }
     
     return decisions;
   }
   
   /**
-   * パターンを分析
+   * 最近の判断を読み込み
    */
-  private analyzePatterns(decisions: Decision[]): Pattern[] {
-    const patterns: Pattern[] = [];
+  private async loadRecentDecisions(days: number): Promise<Decision[]> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
     
-    // 優先度差によるパターン
+    try {
+      const files = await fs.readdir(this.baseDir);
+      const decisions: Decision[] = [];
+      
+      for (const file of files) {
+        if (!this.isValidDecisionFile(file)) {
+          continue;
+        }
+        
+        if (!this.isFileWithinDateRange(file, cutoffDate)) {
+          continue;
+        }
+        
+        const filePath = path.join(this.baseDir, file);
+        const fileDecisions = await this.readDecisionsFromFile(filePath);
+        decisions.push(...fileDecisions);
+      }
+      
+      return decisions;
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+        return [];
+      }
+      throw error;
+    }
+  }
+  
+  private analyzePriorityPatterns(decisions: Decision[]): Pattern[] {
+    const patterns: Pattern[] = [];
     const priorityRanges = [
       { min: 50, max: 100, label: '大きな優先度差（50以上）' },
       { min: 25, max: 50, label: '中程度の優先度差（25-50）' },
@@ -222,71 +243,118 @@ export class DecisionMemory {
     ];
     
     for (const range of priorityRanges) {
-      const relevantDecisions = decisions.filter(d => 
-        d.patterns && 
-        d.patterns.priorityDiff >= range.min && 
-        d.patterns.priorityDiff < range.max
-      );
-      
-      if (relevantDecisions.length >= 3) {
-        const approvals = relevantDecisions.filter(d => d.userAction.type === 'approve');
-        const approvalRate = approvals.length / relevantDecisions.length;
-        
-        // 最も多く承認されたアクションを特定
-        const actionCounts: Record<string, number> = {};
-        approvals.forEach(d => {
-          const action = d.proposedAction.type;
-          actionCounts[action] = (actionCounts[action] || 0) + 1;
-        });
-        
-        const mostCommonAction = Object.entries(actionCounts)
-          .sort(([, a], [, b]) => b - a)[0];
-        
-        if (mostCommonAction) {
-          patterns.push({
-            id: crypto.randomUUID(),
-            description: range.label,
-            conditions: {
-              minPriorityDiff: range.min,
-              maxPriorityDiff: range.max
-            },
-            suggestedAction: mostCommonAction[0],
-            approvalRate,
-            sampleCount: relevantDecisions.length,
-            lastUpdated: new Date().toISOString()
-          });
-        }
-      }
-    }
-    
-    // 時間帯によるパターン
-    const timeOfDayGroups = ['morning', 'afternoon', 'evening'];
-    for (const timeOfDay of timeOfDayGroups) {
-      const relevantDecisions = decisions.filter(d => 
-        d.patterns?.timeOfDay === timeOfDay
-      );
-      
-      if (relevantDecisions.length >= 3) {
-        const approvals = relevantDecisions.filter(d => d.userAction.type === 'approve');
-        const approvalRate = approvals.length / relevantDecisions.length;
-        
-        if (approvalRate > 0.7) {
-          patterns.push({
-            id: crypto.randomUUID(),
-            description: `${timeOfDay}の会議`,
-            conditions: {
-              timeOfDay
-            },
-            suggestedAction: 'context_dependent',
-            approvalRate,
-            sampleCount: relevantDecisions.length,
-            lastUpdated: new Date().toISOString()
-          });
-        }
+      const pattern = this.createPriorityPattern(decisions, range);
+      if (pattern) {
+        patterns.push(pattern);
       }
     }
     
     return patterns;
+  }
+  
+  private createPriorityPattern(
+    decisions: Decision[], 
+    range: { min: number; max: number; label: string }
+  ): Pattern | null {
+    const relevantDecisions = decisions.filter(d => 
+      d.patterns && 
+      d.patterns.priorityDiff >= range.min && 
+      d.patterns.priorityDiff < range.max
+    );
+    
+    if (relevantDecisions.length < 3) {
+      return null;
+    }
+    
+    const approvals = relevantDecisions.filter(d => d.userAction.type === 'approve');
+    const approvalRate = approvals.length / relevantDecisions.length;
+    const mostCommonAction = this.findMostCommonAction(approvals);
+    
+    if (!mostCommonAction) {
+      return null;
+    }
+    
+    return {
+      id: crypto.randomUUID(),
+      description: range.label,
+      conditions: {
+        minPriorityDiff: range.min,
+        maxPriorityDiff: range.max
+      },
+      suggestedAction: mostCommonAction,
+      approvalRate,
+      sampleCount: relevantDecisions.length,
+      lastUpdated: new Date().toISOString()
+    };
+  }
+  
+  private findMostCommonAction(approvedDecisions: Decision[]): string | null {
+    const actionCounts: Record<string, number> = {};
+    
+    approvedDecisions.forEach(d => {
+      const action = d.proposedAction.type;
+      actionCounts[action] = (actionCounts[action] || 0) + 1;
+    });
+    
+    const entries = Object.entries(actionCounts);
+    if (entries.length === 0) {
+      return null;
+    }
+    
+    return entries.sort(([, a], [, b]) => b - a)[0][0];
+  }
+  
+  private analyzeTimeOfDayPatterns(decisions: Decision[]): Pattern[] {
+    const patterns: Pattern[] = [];
+    const timeOfDayGroups = ['morning', 'afternoon', 'evening'];
+    
+    for (const timeOfDay of timeOfDayGroups) {
+      const pattern = this.createTimeOfDayPattern(decisions, timeOfDay);
+      if (pattern) {
+        patterns.push(pattern);
+      }
+    }
+    
+    return patterns;
+  }
+  
+  private createTimeOfDayPattern(decisions: Decision[], timeOfDay: string): Pattern | null {
+    const relevantDecisions = decisions.filter(d => 
+      d.patterns?.timeOfDay === timeOfDay
+    );
+    
+    if (relevantDecisions.length < 3) {
+      return null;
+    }
+    
+    const approvals = relevantDecisions.filter(d => d.userAction.type === 'approve');
+    const approvalRate = approvals.length / relevantDecisions.length;
+    
+    if (approvalRate <= 0.7) {
+      return null;
+    }
+    
+    return {
+      id: crypto.randomUUID(),
+      description: `${timeOfDay}の会議`,
+      conditions: {
+        timeOfDay
+      },
+      suggestedAction: 'context_dependent',
+      approvalRate,
+      sampleCount: relevantDecisions.length,
+      lastUpdated: new Date().toISOString()
+    };
+  }
+  
+  /**
+   * パターンを分析
+   */
+  private analyzePatterns(decisions: Decision[]): Pattern[] {
+    const priorityPatterns = this.analyzePriorityPatterns(decisions);
+    const timePatterns = this.analyzeTimeOfDayPatterns(decisions);
+    
+    return [...priorityPatterns, ...timePatterns];
   }
   
   /**
@@ -326,7 +394,7 @@ export class DecisionMemory {
       cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
       
       for (const file of files) {
-        if (!file.endsWith('.jsonl')) continue;
+        if (!file.endsWith('.jsonl')) {continue;}
         
         const dateStr = file.replace('.jsonl', '');
         if (new Date(dateStr) < cutoffDate) {

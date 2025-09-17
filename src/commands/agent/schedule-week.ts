@@ -818,24 +818,78 @@ async function applyProposedChanges(
     const suggestion = proposal.suggestion;
     const targetEvents = getTargetEvents(proposal);
     
-    if (targetEvents.length === 0) {
-      const actionText = suggestion.action.includes('リスケジュール') ? 'リスケジュール' : '辞退';
-      return {
-        success: false,
-        error: `${actionText}対象のイベントが見つかりません`
-      };
-    }
-    
+    // リスケジュールの場合
     if (suggestion.action.includes('リスケジュール')) {
-      const results = await processMultipleEvents(targetEvents, rescheduleEvent, mgc);
-      const aggregated = aggregateResults(results);
-      return generateProcessingResponse(aggregated, 'reschedule');
+      // 低優先度のイベントを特定
+      const eventToReschedule = proposal.events.reduce((prev: ProposalEvent, curr: ProposalEvent) => 
+        (prev.priority?.score || 0) < (curr.priority?.score || 0) ? prev : curr,
+      proposal.events[0]
+      );
+      
+      // イベント詳細を取得してattendees情報を取得
+      const eventDetails = await mgc.getEvent(eventToReschedule.id);
+      const attendees = eventDetails.attendees || [];
+      const attendeeEmails = attendees.map((a: any) => a.emailAddress.address);
+      
+      const meetingTimes = await mgc.findMeetingTimes({
+        attendees: attendeeEmails.map((email: string) => ({
+          emailAddress: { address: email }
+        })),
+        timeConstraint: {
+          timeslots: [{
+            start: { 
+              dateTime: new Date().toISOString(),
+              timeZone: process.env.OUTLOOK_AGENT_TIMEZONE || 'Asia/Tokyo'
+            },
+            end: {
+              dateTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+              timeZone: process.env.OUTLOOK_AGENT_TIMEZONE || 'Asia/Tokyo'
+            }
+          }]
+        },
+        meetingDuration: 'PT30M',
+        maxCandidates: 5
+      });
+      
+      if (meetingTimes.meetingTimeSuggestions && meetingTimes.meetingTimeSuggestions.length > 0) {
+        const newTime = meetingTimes.meetingTimeSuggestions[0];
+        
+        // イベントを更新
+        await mgc.updateEvent(eventToReschedule.id, {
+          start: newTime.meetingTimeSlot.start,
+          end: newTime.meetingTimeSlot.end,
+        });
+        
+        // 参加者に通知（コメントとして記録）
+        // const message = `スケジュールコンフリクトのため、この会議を${new Date(newTime.meetingTimeSlot.start.dateTime).toLocaleString('ja-JP')}に変更しました。`;
+        
+        return {
+          success: true,
+          details: `「${eventToReschedule.subject}」を${new Date(newTime.meetingTimeSlot.start.dateTime).toLocaleString('ja-JP')}にリスケジュールしました`
+        };
+      } else {
+        return {
+          success: false,
+          error: '適切な代替時間が見つかりませんでした'
+        };
+      }
     }
     
     if (suggestion.action.includes('辞退')) {
-      const results = await processMultipleEvents(targetEvents, declineEvent, mgc);
-      const aggregated = aggregateResults(results);
-      return generateProcessingResponse(aggregated, 'decline');
+      const eventToDecline = proposal.events.reduce((prev: ProposalEvent, curr: ProposalEvent) => 
+        (prev.priority?.score || 0) < (curr.priority?.score || 0) ? prev : curr,
+      proposal.events[0]
+      );
+      
+      // イベントへの返信を更新（辞退）
+      await mgc.updateEventResponse(eventToDecline.id, 'decline');
+      
+      // Note: コメント付きの辞退は将来のdeclineEventメソッド実装待ち
+      
+      return {
+        success: true,
+        details: `「${eventToDecline.subject}」を辞退しました`
+      };
     }
     
     return {
@@ -876,48 +930,48 @@ async function modifyProposal(proposal: Proposal): Promise<Proposal | null> {
   const modifiedProposal = { ...proposal };
   
   switch (action) {
-    case 'change_target': {
-      const { targetEvent } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'targetEvent',
-          message: 'どのイベントをリスケジュールしますか？',
-          choices: proposal.events.map((e: any) => ({
-            name: `${e.subject} (優先度: ${e.priority?.level || 'なし'})`,
-            value: e.id
-          }))
-        }
-      ]);
+  case 'change_target': {
+    const { targetEvent } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'targetEvent',
+        message: 'どのイベントをリスケジュールしますか？',
+        choices: proposal.events.map((e: any) => ({
+          name: `${e.subject} (優先度: ${e.priority?.level || 'なし'})`,
+          value: e.id
+        }))
+      }
+    ]);
       
-      modifiedProposal.suggestion.targetEventId = targetEvent;
-      modifiedProposal.suggestion.action = `選択されたイベントをリスケジュール`;
-      break;
-    }
+    modifiedProposal.suggestion.targetEventId = targetEvent;
+    modifiedProposal.suggestion.action = '選択されたイベントをリスケジュール';
+    break;
+  }
       
-    case 'specify_time': {
-      const { dateStr, timeStr } = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'dateStr',
-          message: '新しい日付 (YYYY-MM-DD):',
-          validate: (input) => /^\d{4}-\d{2}-\d{2}$/.test(input) || '正しい形式で入力してください'
-        },
-        {
-          type: 'input',
-          name: 'timeStr',
-          message: '新しい時刻 (HH:MM):',
-          validate: (input) => /^\d{2}:\d{2}$/.test(input) || '正しい形式で入力してください'
-        }
-      ]);
+  case 'specify_time': {
+    const { dateStr, timeStr } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'dateStr',
+        message: '新しい日付 (YYYY-MM-DD):',
+        validate: (input) => /^\d{4}-\d{2}-\d{2}$/.test(input) || '正しい形式で入力してください'
+      },
+      {
+        type: 'input',
+        name: 'timeStr',
+        message: '新しい時刻 (HH:MM):',
+        validate: (input) => /^\d{2}:\d{2}$/.test(input) || '正しい形式で入力してください'
+      }
+    ]);
       
-      modifiedProposal.suggestion.specificTime = `${dateStr}T${timeStr}:00`;
-      break;
-    }
+    modifiedProposal.suggestion.specificTime = `${dateStr}T${timeStr}:00`;
+    break;
+  }
       
-    case 'change_to_decline':
-      modifiedProposal.suggestion.action = '辞退';
-      modifiedProposal.suggestion.reason = 'ユーザーの判断により辞退';
-      break;
+  case 'change_to_decline':
+    modifiedProposal.suggestion.action = '辞退';
+    modifiedProposal.suggestion.reason = 'ユーザーの判断により辞退';
+    break;
   }
   
   return modifiedProposal;
@@ -928,23 +982,14 @@ async function modifyProposal(proposal: Proposal): Promise<Proposal | null> {
  */
 function getActionText(action: string, target: string): string {
   switch (action) {
-    case 'reschedule':
-      // targetに既に引用符が含まれているか、複数のイベントが含まれている場合はそのまま使用
-      if (target.includes('「') || target.includes('、')) {
-        return `${target}を別の時間にリスケジュール`;
-      } else {
-        return `「${target}」を別の時間にリスケジュール`;
-      }
-    case 'decline':
-      if (target.includes('「') || target.includes('、')) {
-        return `${target}を辞退`;
-      } else {
-        return `「${target}」を辞退`;
-      }
-    case 'keep':
-      return `すべての会議を維持（手動調整が必要）`;
-    default:
-      return action;
+  case 'reschedule':
+    return `「${target}」を別の時間にリスケジュール`;
+  case 'decline':
+    return `「${target}」を辞退`;
+  case 'keep':
+    return '両方の会議を維持（手動調整が必要）';
+  default:
+    return action;
   }
 }
 
@@ -1010,18 +1055,10 @@ function generateAdvancedSuggestion(sortedEvents: any[], action: any): ProposalS
       reason = `「${highPriorityEvent.subject}」の方が優先度が高いため（${highPriorityEvent.priority.level}: ${highPriorityEvent.priority.score}）`;
     }
   } else if (action.action === 'suggest_reschedule') {
-    if (lowPriorityEvents.length === 1) {
-      const lowPriorityEvent = lowPriorityEvents[0];
-      suggestionAction = `「${lowPriorityEvent.subject}」のリスケジュールを検討`;
-      reason = `優先度の差があるため（${highPriorityEvent.priority.score - lowPriorityEvent.priority.score}ポイント差）`;
-    } else {
-      const eventNames = createEventNamesList(lowPriorityEvents);
-      suggestionAction = `${eventNames}のリスケジュールを検討`;
-      reason = `「${highPriorityEvent.subject}」の方が優先度が高いため`;
-    }
-  } else if (lowPriorityEvents.length === 1) {
-    const lowPriorityEvent = lowPriorityEvents[0];
-    suggestionAction = `手動での判断が必要`;
+    suggestionAction = `「${lowPriorityEvent.subject}」のリスケジュールを検討`;
+    reason = `優先度の差があるため（${highPriorityEvent.priority.score - lowPriorityEvent.priority.score}ポイント差）`;
+  } else {
+    suggestionAction = '手動での判断が必要';
     reason = `優先度が近いため、ビジネス判断が必要（${highPriorityEvent.priority.score} vs ${lowPriorityEvent.priority.score}）`;
   } else {
     suggestionAction = `手動での判断が必要`;

@@ -149,6 +149,31 @@ export function getDefaultRules(): SchedulingRules {
   };
 }
 
+interface PriorityConfig {
+  rules: any[];
+  score: number;
+  level: string;
+  description: string;
+}
+
+function checkPriorityLevel(
+  subject: string,
+  attendeesCount: number,
+  organizer: string,
+  config: PriorityConfig
+): { score: number; level: string; reason: string } | null {
+  for (const rule of config.rules) {
+    if (matchesRule(subject, attendeesCount, organizer, rule)) {
+      return {
+        score: config.score,
+        level: config.level,
+        reason: rule.description || config.description
+      };
+    }
+  }
+  return null;
+}
+
 /**
  * イベントの優先度を計算
  */
@@ -156,67 +181,108 @@ export function calculateEventPriority(
   event: any,
   rules: SchedulingRules
 ): { score: number; level: string; reasons: string[] } {
-  let score = 50; // デフォルトスコア
-  let level = 'medium';
-  const reasons: string[] = [];
-  
   const subject = event.subject || '';
   const attendeesCount = event.attendees?.length || 0;
   const organizer = event.organizer?.emailAddress?.address || '';
   
-  // Critical優先度のチェック
-  if (rules.priorities.critical) {
-    for (const rule of rules.priorities.critical) {
-      if (matchesRule(subject, attendeesCount, organizer, rule)) {
-        score = 100;
-        level = 'critical';
-        reasons.push(rule.description || 'Critical priority match');
-        break;
-      }
+  const priorityLevels: PriorityConfig[] = [
+    {
+      rules: rules.priorities.critical || [],
+      score: 100,
+      level: 'critical',
+      description: 'Critical priority match'
+    },
+    {
+      rules: rules.priorities.high || [],
+      score: 75,
+      level: 'high',
+      description: 'High priority match'
+    },
+    {
+      rules: rules.priorities.medium || [],
+      score: 50,
+      level: 'medium',
+      description: 'Medium priority match'
+    },
+    {
+      rules: rules.priorities.low || [],
+      score: 25,
+      level: 'low',
+      description: 'Low priority match'
+    }
+  ];
+  
+  for (const config of priorityLevels) {
+    const result = checkPriorityLevel(subject, attendeesCount, organizer, config);
+    if (result) {
+      return {
+        score: result.score,
+        level: result.level,
+        reasons: [result.reason]
+      };
     }
   }
   
-  // High優先度のチェック
-  if (score < 100 && rules.priorities.high) {
-    for (const rule of rules.priorities.high) {
-      if (matchesRule(subject, attendeesCount, organizer, rule)) {
-        score = 75;
-        level = 'high';
-        reasons.push(rule.description || 'High priority match');
-        break;
-      }
+  return {
+    score: 50,
+    level: 'medium',
+    reasons: ['Default priority']
+  };
+}
+
+function checkPatternMatch(subject: string, rule: z.infer<typeof PriorityRuleSchema>): boolean {
+  if (rule.pattern) {
+    const regex = new RegExp(rule.pattern, 'i');
+    if (!regex.test(subject)) {
+      return false;
     }
   }
   
-  // Medium優先度のチェック
-  if (score < 75 && rules.priorities.medium) {
-    for (const rule of rules.priorities.medium) {
-      if (matchesRule(subject, attendeesCount, organizer, rule)) {
-        score = 50;
-        level = 'medium';
-        reasons.push(rule.description || 'Medium priority match');
-        break;
-      }
+  if (rule.exclude_pattern) {
+    const excludeRegex = new RegExp(rule.exclude_pattern, 'i');
+    if (excludeRegex.test(subject)) {
+      return false;
     }
   }
   
-  // Low優先度のチェック
-  if (score === 50 && rules.priorities.low) {
-    for (const rule of rules.priorities.low) {
-      if (matchesRule(subject, attendeesCount, organizer, rule)) {
-        score = 25;
-        level = 'low';
-        reasons.push(rule.description || 'Low priority match');
-        break;
-      }
-    }
+  return true;
+}
+
+function checkKeywordMatch(subject: string, rule: z.infer<typeof PriorityRuleSchema>): boolean {
+  if (!rule.keywords || rule.keywords.length === 0) {
+    return true;
   }
   
-  if (reasons.length === 0) {
-    reasons.push('Default priority');
+  const subjectLower = subject.toLowerCase();
+  return rule.keywords.some(keyword => 
+    subjectLower.includes(keyword.toLowerCase())
+  );
+}
+
+function checkAttendeesCount(attendeesCount: number, rule: z.infer<typeof PriorityRuleSchema>): boolean {
+  if (!rule.attendees_count) {
+    return true;
   }
   
-  return { score, level, reasons };
+  if (rule.attendees_count.min !== undefined && attendeesCount < rule.attendees_count.min) {
+    return false;
+  }
+  
+  if (rule.attendees_count.max !== undefined && attendeesCount > rule.attendees_count.max) {
+    return false;
+  }
+  
+  return true;
+}
+
+function checkOrganizerPattern(organizer: string, rule: z.infer<typeof PriorityRuleSchema>): boolean {
+  if (!rule.organizer_patterns || rule.organizer_patterns.length === 0) {
+    return true;
+  }
+  
+  return rule.organizer_patterns.some(pattern =>
+    organizer.includes(pattern)
+  );
 }
 
 /**
@@ -228,54 +294,10 @@ function matchesRule(
   organizer: string,
   rule: z.infer<typeof PriorityRuleSchema>
 ): boolean {
-  // パターンマッチング
-  if (rule.pattern) {
-    const regex = new RegExp(rule.pattern, 'i');
-    if (!regex.test(subject)) {
-      return false;
-    }
-  }
-  
-  // 除外パターン
-  if (rule.exclude_pattern) {
-    const excludeRegex = new RegExp(rule.exclude_pattern, 'i');
-    if (excludeRegex.test(subject)) {
-      return false;
-    }
-  }
-  
-  // キーワードマッチング
-  if (rule.keywords && rule.keywords.length > 0) {
-    const subjectLower = subject.toLowerCase();
-    const hasKeyword = rule.keywords.some(keyword => 
-      subjectLower.includes(keyword.toLowerCase())
-    );
-    if (!hasKeyword) {
-      return false;
-    }
-  }
-  
-  // 参加者数の条件
-  if (rule.attendees_count) {
-    if (rule.attendees_count.min !== undefined && attendeesCount < rule.attendees_count.min) {
-      return false;
-    }
-    if (rule.attendees_count.max !== undefined && attendeesCount > rule.attendees_count.max) {
-      return false;
-    }
-  }
-  
-  // 主催者パターン
-  if (rule.organizer_patterns && rule.organizer_patterns.length > 0) {
-    const matchesOrganizer = rule.organizer_patterns.some(pattern =>
-      organizer.includes(pattern)
-    );
-    if (!matchesOrganizer) {
-      return false;
-    }
-  }
-  
-  return true;
+  return checkPatternMatch(subject, rule) &&
+         checkKeywordMatch(subject, rule) &&
+         checkAttendeesCount(attendeesCount, rule) &&
+         checkOrganizerPattern(organizer, rule);
 }
 
 /**

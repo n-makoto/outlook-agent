@@ -132,9 +132,9 @@ export async function doctor(): Promise<void> {
   
   checks.forEach(check => {
     const icon = check.status === 'ok' ? '✅' : 
-                 check.status === 'warning' ? '⚠️ ' : '❌';
+      check.status === 'warning' ? '⚠️ ' : '❌';
     const color = check.status === 'ok' ? chalk.green :
-                  check.status === 'warning' ? chalk.yellow : chalk.red;
+      check.status === 'warning' ? chalk.yellow : chalk.red;
     
     console.log(`${icon} ${chalk.bold(check.name)}`);
     console.log(`   ${color(check.message)}`);

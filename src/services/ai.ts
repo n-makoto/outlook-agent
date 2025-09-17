@@ -147,7 +147,7 @@ export class AIService {
         messages,
         temperature: 0.7,
         max_tokens: 1000,
-        response_format: { type: "json_object" }
+        response_format: { type: 'json_object' }
       });
       
       const content = response.choices[0]?.message?.content;
@@ -167,7 +167,7 @@ export class AIService {
         };
       } catch (parseError) {
         // JSON解析に失敗した場合は、テキスト形式で返す
-        console.warn('Failed to parse AI response as JSON, returning fallback structure:', parseError)
+        console.warn('Failed to parse AI response as JSON, returning fallback structure:', parseError);
         return {
           success: true,
           result: {
