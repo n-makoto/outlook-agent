@@ -246,9 +246,13 @@ async function executeEventAction(
   const isOrganizer = event?.responseStatus?.response === 'organizer';
   
   if (resolution.action === 'attend') {
-    await handleAttendAction(resolution.eventId, event, isOrganizer, mgc);
+    await handleAttendAction(resolution.eventId, event, mgc);
   } else if (resolution.action === 'decline') {
-    await handleDeclineAction(resolution, event, isOrganizer, mgc);
+    if (isOrganizer) {
+      await handleOrganizerCancellation(resolution, event, mgc);
+    } else {
+      await handleParticipantDecline(resolution, event, mgc);
+    }
   } else if (resolution.action === 'reschedule') {
     await handleRescheduleAction(resolution.eventId, event);
   }
@@ -257,9 +261,10 @@ async function executeEventAction(
 async function handleAttendAction(
   eventId: string,
   event: CalendarEvent | undefined,
-  isOrganizer: boolean,
   mgc: MgcService
 ): Promise<void> {
+  const isOrganizer = event?.responseStatus?.response === 'organizer';
+  
   if (!isOrganizer && event?.responseStatus?.response !== 'accepted') {
     console.log(chalk.cyan(`Accepting: ${event?.subject}...`));
     try {
@@ -271,18 +276,6 @@ async function handleAttendAction(
   }
 }
 
-async function handleDeclineAction(
-  resolution: ConflictResolution,
-  event: CalendarEvent | undefined,
-  isOrganizer: boolean,
-  mgc: MgcService
-): Promise<void> {
-  if (isOrganizer) {
-    await handleOrganizerCancellation(resolution, event, mgc);
-  } else {
-    await handleParticipantDecline(resolution, event, mgc);
-  }
-}
 
 async function handleOrganizerCancellation(
   resolution: ConflictResolution,
