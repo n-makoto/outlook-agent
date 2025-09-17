@@ -21,7 +21,7 @@ export async function bulkAddContacts(): Promise<void> {
           name: 'input',
           message: `Contact ${newContacts.length + 1}:`,
           validate: (value: string) => {
-            if (!value) return true; // Empty is OK (means done)
+            if (!value) {return true;} // Empty is OK (means done)
             const parts = value.split(',').map(p => p.trim());
             if (parts.length < 1 || !parts[0]) {
               return 'Email is required';
@@ -53,7 +53,7 @@ export async function bulkAddContacts(): Promise<void> {
     }
 
     // Confirm addition
-    console.log(chalk.blue(`\nContacts to add:`));
+    console.log(chalk.blue('\nContacts to add:'));
     newContacts.forEach(contact => {
       console.log(`  - ${contact.name} <${contact.email}>`);
     });

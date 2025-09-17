@@ -279,9 +279,9 @@ ${events}
 
 ## 各イベントの優先度
 ${JSON.stringify(conflict.events.map((e: any) => ({
-  subject: e.subject,
-  priority: e.priority
-})), null, 2)}
+    subject: e.subject,
+    priority: e.priority
+  })), null, 2)}
 
 ${specialRuleNote}
 
@@ -292,7 +292,7 @@ ${specialRuleNote}
 4. 判断理由を明確に説明
 
 ${instructions.output_settings.show_alternatives ? 
-  `最大${instructions.output_settings.max_alternatives}個の代替案を提示してください。` : ''}
+    `最大${instructions.output_settings.max_alternatives}個の代替案を提示してください。` : ''}
 `;
 }
 

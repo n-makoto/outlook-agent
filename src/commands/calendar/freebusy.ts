@@ -66,9 +66,9 @@ export async function checkFreeBusy(options: { user?: string | boolean; days?: n
           const start = format(new Date(item.start.dateTime + 'Z'), 'HH:mm');
           const end = format(new Date(item.end.dateTime + 'Z'), 'HH:mm');
           const status = item.status === 'busy' ? chalk.red('Busy') : 
-                        item.status === 'tentative' ? chalk.yellow('Tentative') :
-                        item.status === 'oof' ? chalk.magenta('Out of Office') :
-                        chalk.gray('Unknown');
+            item.status === 'tentative' ? chalk.yellow('Tentative') :
+              item.status === 'oof' ? chalk.magenta('Out of Office') :
+                chalk.gray('Unknown');
           console.log(`  ${start}-${end}: ${status}`);
         });
       }

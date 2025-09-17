@@ -876,48 +876,48 @@ async function modifyProposal(proposal: Proposal): Promise<Proposal | null> {
   const modifiedProposal = { ...proposal };
   
   switch (action) {
-    case 'change_target': {
-      const { targetEvent } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'targetEvent',
-          message: 'どのイベントをリスケジュールしますか？',
-          choices: proposal.events.map((e: any) => ({
-            name: `${e.subject} (優先度: ${e.priority?.level || 'なし'})`,
-            value: e.id
-          }))
-        }
-      ]);
+  case 'change_target': {
+    const { targetEvent } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'targetEvent',
+        message: 'どのイベントをリスケジュールしますか？',
+        choices: proposal.events.map((e: any) => ({
+          name: `${e.subject} (優先度: ${e.priority?.level || 'なし'})`,
+          value: e.id
+        }))
+      }
+    ]);
       
-      modifiedProposal.suggestion.targetEventId = targetEvent;
-      modifiedProposal.suggestion.action = `選択されたイベントをリスケジュール`;
-      break;
-    }
+    modifiedProposal.suggestion.targetEventId = targetEvent;
+    modifiedProposal.suggestion.action = '選択されたイベントをリスケジュール';
+    break;
+  }
       
-    case 'specify_time': {
-      const { dateStr, timeStr } = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'dateStr',
-          message: '新しい日付 (YYYY-MM-DD):',
-          validate: (input) => /^\d{4}-\d{2}-\d{2}$/.test(input) || '正しい形式で入力してください'
-        },
-        {
-          type: 'input',
-          name: 'timeStr',
-          message: '新しい時刻 (HH:MM):',
-          validate: (input) => /^\d{2}:\d{2}$/.test(input) || '正しい形式で入力してください'
-        }
-      ]);
+  case 'specify_time': {
+    const { dateStr, timeStr } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'dateStr',
+        message: '新しい日付 (YYYY-MM-DD):',
+        validate: (input) => /^\d{4}-\d{2}-\d{2}$/.test(input) || '正しい形式で入力してください'
+      },
+      {
+        type: 'input',
+        name: 'timeStr',
+        message: '新しい時刻 (HH:MM):',
+        validate: (input) => /^\d{2}:\d{2}$/.test(input) || '正しい形式で入力してください'
+      }
+    ]);
       
-      modifiedProposal.suggestion.specificTime = `${dateStr}T${timeStr}:00`;
-      break;
-    }
+    modifiedProposal.suggestion.specificTime = `${dateStr}T${timeStr}:00`;
+    break;
+  }
       
-    case 'change_to_decline':
-      modifiedProposal.suggestion.action = '辞退';
-      modifiedProposal.suggestion.reason = 'ユーザーの判断により辞退';
-      break;
+  case 'change_to_decline':
+    modifiedProposal.suggestion.action = '辞退';
+    modifiedProposal.suggestion.reason = 'ユーザーの判断により辞退';
+    break;
   }
   
   return modifiedProposal;
@@ -928,23 +928,14 @@ async function modifyProposal(proposal: Proposal): Promise<Proposal | null> {
  */
 function getActionText(action: string, target: string): string {
   switch (action) {
-    case 'reschedule':
-      // targetに既に引用符が含まれているか、複数のイベントが含まれている場合はそのまま使用
-      if (target.includes('「') || target.includes('、')) {
-        return `${target}を別の時間にリスケジュール`;
-      } else {
-        return `「${target}」を別の時間にリスケジュール`;
-      }
-    case 'decline':
-      if (target.includes('「') || target.includes('、')) {
-        return `${target}を辞退`;
-      } else {
-        return `「${target}」を辞退`;
-      }
-    case 'keep':
-      return `すべての会議を維持（手動調整が必要）`;
-    default:
-      return action;
+  case 'reschedule':
+    return `「${target}」を別の時間にリスケジュール`;
+  case 'decline':
+    return `「${target}」を辞退`;
+  case 'keep':
+    return '両方の会議を維持（手動調整が必要）';
+  default:
+    return action;
   }
 }
 
@@ -1010,22 +1001,12 @@ function generateAdvancedSuggestion(sortedEvents: any[], action: any): ProposalS
       reason = `「${highPriorityEvent.subject}」の方が優先度が高いため（${highPriorityEvent.priority.level}: ${highPriorityEvent.priority.score}）`;
     }
   } else if (action.action === 'suggest_reschedule') {
-    if (lowPriorityEvents.length === 1) {
-      const lowPriorityEvent = lowPriorityEvents[0];
-      suggestionAction = `「${lowPriorityEvent.subject}」のリスケジュールを検討`;
-      reason = `優先度の差があるため（${highPriorityEvent.priority.score - lowPriorityEvent.priority.score}ポイント差）`;
-    } else {
-      const eventNames = createEventNamesList(lowPriorityEvents);
-      suggestionAction = `${eventNames}のリスケジュールを検討`;
-      reason = `「${highPriorityEvent.subject}」の方が優先度が高いため`;
-    }
-  } else if (lowPriorityEvents.length === 1) {
     const lowPriorityEvent = lowPriorityEvents[0];
-    suggestionAction = `手動での判断が必要`;
-    reason = `優先度が近いため、ビジネス判断が必要（${highPriorityEvent.priority.score} vs ${lowPriorityEvent.priority.score}）`;
+    suggestionAction = `「${lowPriorityEvent.subject}」のリスケジュールを検討`;
+    reason = `優先度の差があるため（${highPriorityEvent.priority.score - lowPriorityEvent.priority.score}ポイント差）`;
   } else {
-    suggestionAction = `手動での判断が必要`;
-    reason = `複数の予定が同じ優先度のため、ビジネス判断が必要`;
+    suggestionAction = '手動での判断が必要';
+    reason = `優先度が近いため、ビジネス判断が必要（${highPriorityEvent.priority.score} vs ${lowPriorityEvents[0]?.priority.score}）`;
   }
   
   return {

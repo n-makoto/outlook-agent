@@ -96,9 +96,9 @@ export function findBestSlot(
   availableSlots: TimeSlot[],
   preferredTime?: string // "morning", "afternoon", "evening"
 ): TimeSlot | null {
-  if (availableSlots.length === 0) return null;
+  if (availableSlots.length === 0) {return null;}
 
-  if (!preferredTime) return availableSlots[0];
+  if (!preferredTime) {return availableSlots[0];}
 
   // 時間帯の優先順位に基づいて選択
   const timePreferences = {
