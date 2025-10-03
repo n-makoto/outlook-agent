@@ -42,9 +42,17 @@ export function createCLI(): Command {
     .command('view')
     .description('View calendar events')
     .option('-d, --date <date>', 'Specific date (YYYY-MM-DD)')
+    .option('-s, --start <date>', 'Start date for range (YYYY-MM-DD)')
+    .option('-e, --end <date>', 'End date for range (YYYY-MM-DD)')
+    .option('--days <number>', 'Number of days from today (e.g., --days 7 for next 7 days)')
     .option('-u, --user [email]', 'View another user\'s calendar (interactive if no email provided)')
     .option('--json', 'Output in JSON format for LLM integration')
-    .action(viewCalendar);
+    .action((options) => {
+      if (options.days) {
+        options.days = parseInt(options.days);
+      }
+      return viewCalendar(options);
+    });
 
   // イベント作成コマンド
   calendar

@@ -1,12 +1,12 @@
 import { MgcService } from '../../services/mgc.js';
-import { getToday } from '../../utils/date.js';
+import { getDateRange } from '../../utils/date.js';
 import { formatEvent } from '../../utils/format.js';
 import { selectUser } from '../../utils/interactive.js';
 import chalk from 'chalk';
 
-export async function viewCalendar(options: { date?: string; user?: string | boolean; json?: boolean } = {}): Promise<void> {
+export async function viewCalendar(options: { date?: string; start?: string; end?: string; days?: number; user?: string | boolean; json?: boolean } = {}): Promise<void> {
   const mgc = new MgcService();
-  
+
   // 認証チェック
   const isAuthenticated = await mgc.checkAuth();
   if (!isAuthenticated) {
@@ -14,8 +14,13 @@ export async function viewCalendar(options: { date?: string; user?: string | boo
     process.exit(1);
   }
 
-  // 日付範囲の設定（今日のみ）
-  const { start, end } = getToday();
+  // 日付範囲の設定
+  const { start, end } = getDateRange({
+    date: options.date,
+    start: options.start,
+    end: options.end,
+    days: options.days
+  });
   
   try {
     // ユーザー指定の処理
@@ -66,18 +71,29 @@ export async function viewCalendar(options: { date?: string; user?: string | boo
     }
     
     if (events.length === 0) {
-      console.log(chalk.gray('No events for today'));
+      console.log(chalk.gray('No events found'));
       return;
     }
-    
-    const title = userEmail 
-      ? `\nSchedule for ${userEmail}:`
-      : '\nToday\'s Schedule:';
+
+    // タイトル生成
+    let title = userEmail ? `\nSchedule for ${userEmail}:` : '\nSchedule:';
+    if (options.date) {
+      title += ` ${options.date}`;
+    } else if (options.start && options.end) {
+      title += ` ${options.start} to ${options.end}`;
+    } else if (options.days) {
+      title += ` (Next ${options.days} days)`;
+    } else {
+      title = userEmail ? `\nSchedule for ${userEmail}:` : '\nToday\'s Schedule:';
+    }
     console.log(chalk.bold(title));
     console.log(chalk.gray('─'.repeat(50)));
-    
+
+    // 複数日にまたがる場合は日付を表示
+    const showDate = !!(options.days || options.start || (!options.date));
+
     events.forEach(event => {
-      console.log(formatEvent(event));
+      console.log(formatEvent(event, { showDate }));
     });
     
     console.log(chalk.gray('─'.repeat(50)));
